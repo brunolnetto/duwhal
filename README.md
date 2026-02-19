@@ -93,13 +93,6 @@ With `uv` (recommended):
 uv add duwhal
 ```
 
-Optional extras:
-
-```bash
-pip install "duwhal[pandas]"   # Pandas support
-pip install "duwhal[polars]"   # Polars support
-```
-
 ---
 
 ## Quick Start

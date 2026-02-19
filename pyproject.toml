@@ -30,11 +30,6 @@ dependencies = [
     "pyarrow>=21.0.0",
 ]
 
-[project.optional-dependencies]
-test = ["pytest>=7.0", "pytest-cov", "ruff", "mypy"]
-polars = ["polars>=0.20.0"]
-pandas = ["pandas>=2.0.0"]
-arrow = ["pyarrow>=14.0.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -46,7 +41,6 @@ test = [
     "pytest-cov>=7.0.0",
     "pandas>=2.0.0",
     "polars>=0.20.0",
-    "pyarrow>=14.0.0",
 ]
 
 [tool.setuptools.packages.find]
