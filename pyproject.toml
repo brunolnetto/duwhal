@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "duwhal"
+version = "0.1.0"
+description = "High-Performance Bipartite Interaction Graph Engine powered by DuckDB"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = [
+    "recommendation", 
+    "graph-theory",
+    "bipartite-graph",
+    "path-integral",
+    "association-rules", 
+    "collaborative-filtering", 
+    "duckdb"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "duckdb>=0.10.0",
+    "numpy>=1.23.0",
+    "narwhals>=2.16.0",
+    "pyarrow>=21.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov", "ruff", "mypy"]
+polars = ["polars>=0.20.0"]
+pandas = ["pandas>=2.0.0"]
+arrow = ["pyarrow>=14.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["duwhal*"]
