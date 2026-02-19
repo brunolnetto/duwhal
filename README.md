@@ -1,5 +1,9 @@
 # 🦆🐋 Duwhal
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/brunolnetto/duwhal/main/images/logo_256.png" width="256" alt="Duwhal Logo">
+</p>
+
 **High-Performance Bipartite Interaction Graph Engine — powered by DuckDB.**
 
 [![codecov](https://codecov.io/gh/brunolnetto/duwhal/graph/badge.svg?token=4N88BXX4Q9)](https://codecov.io/gh/brunolnetto/duwhal/graph/badge.svg?token=4N88BXX4Q9)
