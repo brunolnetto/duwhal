@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "duwhal"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-Performance Bipartite Interaction Graph Engine powered by DuckDB"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -41,7 +41,8 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 
 [dependency-groups]
-dev = [
+test = [
+    "pytest>=7.0",
     "pytest-cov>=7.0.0",
 ]
 
