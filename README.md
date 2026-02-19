@@ -2,8 +2,7 @@
 
 **High-Performance Bipartite Interaction Graph Engine — powered by DuckDB.**
 
-[![Tests](https://github.com/pingu/duwhal/actions/workflows/tests.yml/badge.svg)](https://github.com/pingu/duwhal/actions)
-[![Coverage](https://codecov.io/gh/pingu/duwhal/branch/main/graph/badge.svg)](https://codecov.io/gh/pingu/duwhal)
+[![codecov](https://codecov.io/gh/brunolnetto/duwhal/graph/badge.svg?token=4N88BXX4Q9)](https://codecov.io/gh/brunolnetto/duwhal/graph/badge.svg?token=4N88BXX4Q9)
 [![Python ≥ 3.9](https://img.shields.io/badge/python-%3E%3D3.9-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
