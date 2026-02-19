@@ -1,7 +1,7 @@
 # 🦆🐋 Duwhal
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/brunolnetto/duwhal/main/images/logo_256.png" width="256" alt="Duwhal Logo">
+  <img src="https://raw.githubusercontent.com/brunolnetto/duwhal/main/images/logo_128.png" width="128" alt="Duwhal Logo">
 </p>
 
 **High-Performance Bipartite Interaction Graph Engine — powered by DuckDB.**
