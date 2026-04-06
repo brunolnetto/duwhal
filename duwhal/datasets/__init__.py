@@ -14,6 +14,7 @@ Domains
 - **social**: Filter bubbles, community equilibrium
 - **scaling**: Large-scale power-law data for benchmarking
 - **scc_synthetic**: Controlled multi-SCC graphs for path-integral research
+- **temporal**: Time-variant interaction data for temporal algorithm benchmarking
 """
 
 from .scc_synthetic import generate_3scc_dataset
@@ -23,6 +24,7 @@ from .genomics import generate_genomics_data
 from .nlp import generate_nlp_corpus
 from .social import generate_filter_bubble_data
 from .scaling import generate_large_scale_data
+from .temporal import generate_temporal_interactions, generate_directed_sequence_data
 
 __all__ = [
     # SCC / Path Integral
@@ -40,4 +42,7 @@ __all__ = [
     "generate_filter_bubble_data",
     # Scaling
     "generate_large_scale_data",
+    # Temporal
+    "generate_temporal_interactions",
+    "generate_directed_sequence_data",
 ]
