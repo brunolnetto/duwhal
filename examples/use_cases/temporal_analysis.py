@@ -29,7 +29,9 @@ def analyze_temporal_graph():
         # ------------------------------------------------------------------ #
         # Full report (runs all five aggregators in one call)                 #
         # ------------------------------------------------------------------ #
-        report = TemporalAggregationReport.build(dw, n_windows=n_windows, min_cooccurrence=1)
+        report = TemporalAggregationReport.build(
+            dw, n_windows=n_windows, min_cooccurrence=1, scc_min_cooccurrence=2
+        )
         report.summary()
 
         # ------------------------------------------------------------------ #

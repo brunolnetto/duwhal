@@ -591,7 +591,13 @@ class NodeCorrelationMatrix:
         return corr
 
     def leading_lagging(self) -> pd.DataFrame:
-        """Lagged cross-correlation for all node pairs."""
+        """Lagged cross-correlation for all node pairs.
+
+        For each unordered pair (a, b) and each lag, only the direction with
+        the strictly higher |correlation| is kept.  When both directions are
+        equally strong the pair is omitted — reporting "A leads B" AND
+        "B leads A" at the same lag would be contradictory.
+        """
         mat = self._activity_matrix()
         nodes = mat.columns.tolist()
         rows = []
@@ -602,24 +608,41 @@ class NodeCorrelationMatrix:
                 for lag in range(1, self.max_lag + 1):
                     if len(a) <= lag:
                         continue
-                    for leader, follower, la, fo in [
-                        (na, nb, a[:-lag], b[lag:]),
-                        (nb, na, b[:-lag], a[lag:]),
-                    ]:
-                        r = (
-                            float(np.corrcoef(la, fo)[0, 1])
-                            if la.std() > 0 and fo.std() > 0
-                            else 0.0
-                        )
+                    la, fo_ab = a[:-lag], b[lag:]
+                    lb, fo_ba = b[:-lag], a[lag:]
+                    r_ab = (
+                        float(np.corrcoef(la, fo_ab)[0, 1])
+                        if la.std() > 0 and fo_ab.std() > 0
+                        else 0.0
+                    )
+                    r_ba = (
+                        float(np.corrcoef(lb, fo_ba)[0, 1])
+                        if lb.std() > 0 and fo_ba.std() > 0
+                        else 0.0
+                    )
+                    # Report only the dominant direction; skip symmetric ties
+                    # to prevent the contradictory "A leads B" + "B leads A".
+                    if abs(r_ab) > abs(r_ba) + 1e-6:
                         rows.append(
                             {
-                                "node_a": leader,
-                                "node_b": follower,
+                                "node_a": na,
+                                "node_b": nb,
                                 "lag": lag,
-                                "correlation": round(r, 3),
-                                "relationship": f"{leader} leads {follower}",
+                                "correlation": round(r_ab, 3),
+                                "relationship": f"{na} leads {nb}",
                             }
                         )
+                    elif abs(r_ba) > abs(r_ab) + 1e-6:
+                        rows.append(
+                            {
+                                "node_a": nb,
+                                "node_b": na,
+                                "lag": lag,
+                                "correlation": round(r_ba, 3),
+                                "relationship": f"{nb} leads {na}",
+                            }
+                        )
+                    # else: symmetric — skip to avoid contradictions
         df = pd.DataFrame(rows)
         return df.reindex(df["correlation"].abs().sort_values(ascending=False).index).reset_index(
             drop=True
@@ -732,16 +755,19 @@ class TemporalAggregationReport:
             f"  Persistent ({len(persistent)}): "
             + ", ".join(f"{r.source}->{r.target}" for _, r in persistent.iterrows())
         )
+        transient_sample = transient.head(5)
+        suffix = f" ... (+{len(transient) - 5} more)" if len(transient) > 5 else ""
         print(
             f"  Transient  ({len(transient)}): "
-            + ", ".join(f"{r.source}->{r.target}" for _, r in transient.head(5).iterrows())
+            + ", ".join(f"{r.source}->{r.target}" for _, r in transient_sample.iterrows())
+            + suffix
         )
 
         cm = self.community_metrics
         if not cm.empty:
             print("\n-- Community Cohesion per Window --")
             print(
-                cm[["window_label", "scc_id", "size", "cohesion", "bridge_nodes"]].to_string(
+                cm[["window_label", "scc_id", "size", "cohesion", "n_bridge_nodes"]].to_string(
                     index=False
                 )
             )
