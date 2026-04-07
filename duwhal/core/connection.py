@@ -1,8 +1,11 @@
 from __future__ import annotations
-import duckdb
+
 from pathlib import Path
-from typing import Union, Optional, Any
+from typing import Any, Optional, Union
+
+import duckdb
 import pyarrow as pa
+
 
 class DuckDBConnection:
     """Wrapper for DuckDB connection with utility methods."""
@@ -13,8 +16,10 @@ class DuckDBConnection:
         threads: Optional[int] = None,
     ):
         self._database = str(database)
+        self._memory_limit = memory_limit
+        self._threads = threads
         self.conn = duckdb.connect(self._database)
-        
+
         if memory_limit:
             self.conn.execute(f"SET memory_limit='{memory_limit}'")
         if threads:

@@ -1,9 +1,13 @@
 from __future__ import annotations
-from typing import Union, Optional, Any, Callable, List
+
 from pathlib import Path
-import pyarrow as pa
+from typing import List, Optional
+
 import narwhals as nw
+
 from duwhal.core.connection import DuckDBConnection
+from duwhal.core.facets import build_composite_key, build_facet_entities, validate_disjoint
+
 
 def _check_column_exists(conn: DuckDBConnection, table_name: str, column_name: str) -> bool:
     try:
@@ -71,7 +75,67 @@ def _handle_table_upsert(conn, table_name, append, has_sort):
     else:
         _append_to_table(conn, table_name, has_sort)
 
-def load_interactions(conn, source, set_col="set_id", node_col="node_id", sort_col=None, sort_callback=None, table_name="interactions", append=False):
+def load_interactions(
+    conn,
+    source,
+    set_col: str = "set_id",
+    node_col: str = "node_id",
+    sort_col=None,
+    sort_callback=None,
+    table_name: str = "interactions",
+    append: bool = False,
+    facet_cols: Optional[List[str]] = None,
+    facet_mode: Optional[str] = None,
+):
+    """Load interaction data into a DuckDB table.
+
+    Parameters
+    ----------
+    facet_cols:
+        Optional list of facet columns in *source* (e.g. ``["region", "day_period"]``).
+        Ignored when *source* is a file path.
+    facet_mode:
+        How to handle the facet columns.  One of:
+
+        ``"composite"``
+            Build a composite context key ``set_col|facet1|facet2`` (pattern 1).
+            The enriched key becomes the new ``set_col`` fed to the DB.
+
+        ``"entity"``
+            Append pseudo-entity rows ``facet:col=val|…`` to each context
+            (pattern 3).  The merged DataFrame is fed to the DB.
+
+        ``None`` (default)
+            No facet transformation; *facet_cols* is ignored.
+    """
+    validate_disjoint(
+        set_col=set_col,
+        node_col=node_col,
+        sort_col=sort_col,
+        facet_cols=facet_cols,
+    )
+    if facet_cols and facet_mode and not isinstance(source, (str, Path)):
+        import pandas as _pd
+        try:
+            source = _pd.DataFrame(source) if not hasattr(source, "columns") else source
+        except Exception:
+            pass
+        else:
+            if facet_mode == "composite":
+                source = build_composite_key(
+                    source, set_col, facet_cols, out_col="_context_key"
+                )
+                set_col = "_context_key"
+            elif facet_mode == "entity":
+                source = build_facet_entities(
+                    source, set_col, node_col, facet_cols,
+                    extra_cols=[sort_col] if sort_col else None
+                )
+            else:
+                raise ValueError(
+                    f"Unknown facet_mode={facet_mode!r}. "
+                    "Expected 'composite' or 'entity'."
+                )
     if isinstance(source, (str, Path)): _prepare_file_source(conn, source, set_col, node_col, sort_col)
     else: _prepare_df_source(conn, source, set_col, node_col, sort_col, sort_callback)
     _handle_table_upsert(conn, table_name, append, _check_column_exists(conn, "_tmp_interactions", "sort_column"))

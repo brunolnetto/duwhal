@@ -38,6 +38,9 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 
 [dependency-groups]
+dev = [
+    "pytest-json-report>=1.5.0",
+]
 test = [
     "pytest>=7.0",
     "pytest-cov>=7.0.0",
