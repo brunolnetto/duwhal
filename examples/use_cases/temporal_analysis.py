@@ -45,10 +45,13 @@ def analyze_temporal_graph():
         rising = rollup[rollup["activity_trend"] > 0].sort_values("activity_trend", ascending=False)
         print("Rising items (positive activity trend):")
         if not rising.empty:
+            rising_sample = rising.head(5)
+            suffix = f" ... (+{len(rising) - 5} more)" if len(rising) > 5 else ""
             print(
-                rising[["node_id", "total_activity", "active_windows", "activity_trend", "status"]]
-                .head(5)
-                .to_string(index=False)
+                rising_sample[
+                    ["node_id", "total_activity", "active_windows", "activity_trend", "status"]
+                ].to_string(index=False)
+                + suffix
             )
 
         churned = rollup[rollup["status"] == "churned"]
