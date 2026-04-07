@@ -416,12 +416,29 @@ class GraphSnapshotAggregator:
         fl AS (
             SELECT node_id, MIN(win) AS first_win, MAX(win) AS last_win
             FROM node_win GROUP BY node_id
+        ),
+        all_wins AS (
+            SELECT DISTINCT win FROM node_win
+        ),
+        new_per_win AS (
+            SELECT nw.win, COUNT(*) AS new_nodes
+            FROM node_win nw
+            JOIN fl ON fl.node_id = nw.node_id AND fl.first_win = nw.win
+            GROUP BY nw.win
+        ),
+        churn_per_win AS (
+            SELECT fl.last_win + 1 AS win, COUNT(*) AS churned_nodes
+            FROM fl
+            WHERE fl.last_win < {n - 1}
+            GROUP BY fl.last_win + 1
         )
-        SELECT nw.win,
-               COUNT(*) FILTER (WHERE fl.first_win = nw.win)                  AS new_nodes,
-               COUNT(*) FILTER (WHERE fl.last_win  = nw.win AND nw.win < {n - 1}) AS churned_nodes
-        FROM node_win nw JOIN fl USING(node_id)
-        GROUP BY nw.win ORDER BY nw.win
+        SELECT aw.win,
+               COALESCE(np.new_nodes,     0) AS new_nodes,
+               COALESCE(cp.churned_nodes, 0) AS churned_nodes
+        FROM all_wins aw
+        LEFT JOIN new_per_win   np USING(win)
+        LEFT JOIN churn_per_win cp USING(win)
+        ORDER BY aw.win
         """).to_pandas()
 
         structural = structural.merge(churn, on="win", how="left").fillna(0)

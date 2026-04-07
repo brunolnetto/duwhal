@@ -246,6 +246,18 @@ class TestGraphSnapshotAggregator:
         df = agg.compute()
         assert df["n_sccs"].isna().all()
 
+    def test_node_conservation(self, agg_dw):
+        """n_nodes[i] == n_nodes[i-1] + new_nodes[i] - churned_nodes[i]."""
+        agg = GraphSnapshotAggregator(agg_dw, n_windows=4)
+        df = agg.compute().reset_index(drop=True)
+        for i in range(1, len(df)):
+            expected = (
+                df.loc[i - 1, "n_nodes"] + df.loc[i, "new_nodes"] - df.loc[i, "churned_nodes"]
+            )
+            assert df.loc[i, "n_nodes"] == expected, (
+                f"Window {i}: expected n_nodes={expected}, got {df.loc[i, 'n_nodes']}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # 4. CommunityAggregator
