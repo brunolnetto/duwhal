@@ -69,10 +69,13 @@ def analyze_temporal_graph():
         )
         print(f"Persistent edges ({len(persistent)}):")
         if not persistent.empty:
+            persistent_sample = persistent.head(5)
+            suffix = f" ... (+{len(persistent) - 5} more)" if len(persistent) > 5 else ""
             print(
-                persistent[["source", "target", "stability", "weight_mean", "weight_trend"]]
-                .head(5)
-                .to_string(index=False)
+                persistent_sample[
+                    ["source", "target", "stability", "weight_mean", "weight_trend"]
+                ].to_string(index=False)
+                + suffix
             )
 
         # ------------------------------------------------------------------ #

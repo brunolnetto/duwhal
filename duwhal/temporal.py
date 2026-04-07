@@ -637,7 +637,7 @@ class DirectedTemporalGraph:
         SELECT
             item                                             AS next_item,
             SUM(strength)                                    AS transition_prob,
-            MIN(depth)                                       AS steps,
+            arg_max(depth, strength)                         AS steps,
             arg_max(array_to_string(path, ' -> '), strength) AS path
         FROM traversal
         WHERE depth > 0 {exc}
