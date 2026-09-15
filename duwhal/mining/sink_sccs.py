@@ -22,7 +22,7 @@ class SinkSCCFinder:
             JOIN _node_totals t ON a.node_id = t.node_id
             GROUP BY 1, 2, t.total HAVING cooc >= {self.min_cooccurrence} AND prob >= {min_confidence}
         """)
-        edges = self.conn.execute("SELECT source, target FROM _sink_edges").fetch_arrow_table().to_pylist()
+        edges = self.conn.execute("SELECT source, target FROM _sink_edges").to_arrow_table().to_pylist()
         adj = {}
         for r in edges: adj.setdefault(r["source"], []).append(r["target"])
         return adj

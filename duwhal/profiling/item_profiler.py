@@ -195,7 +195,9 @@ class ItemProfiler:
             labels = np.zeros(n_samples, dtype=int)
         else:
             km = KMeans(n_clusters=k, random_state=self._random_state, n_init="auto")
-            labels = km.fit_predict(X_scaled)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                labels = km.fit_predict(X_scaled)
 
         profiles = profiles.copy()
         profiles["_cluster_id"] = labels

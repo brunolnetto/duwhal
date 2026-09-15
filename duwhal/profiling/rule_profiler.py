@@ -93,7 +93,9 @@ def _select_k(X_scaled: np.ndarray, max_k: int, random_state: int) -> int:
     best_k, best_score = 2, -1.0
     for k in range(2, k_max + 1):
         km = KMeans(n_clusters=k, random_state=random_state, n_init="auto")
-        labels = km.fit_predict(X_scaled)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            labels = km.fit_predict(X_scaled)
         if len(set(labels)) < 2:
             continue
         score = float(silhouette_score(X_scaled, labels))
@@ -239,7 +241,9 @@ class RuleProfiler:
             labels = np.zeros(n_samples, dtype=int)
         else:
             km = KMeans(n_clusters=k, random_state=self._random_state, n_init="auto")
-            labels = km.fit_predict(X_scaled)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                labels = km.fit_predict(X_scaled)
 
         self._label_array = labels
         global_mean = X_raw.mean(axis=0)
