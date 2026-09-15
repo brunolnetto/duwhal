@@ -42,39 +42,64 @@ def fitted_tracker(agg_dw):
     return tracker
 
 
+@pytest.fixture(scope="module")
+def nta(agg_dw):
+    return NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
+
+
+@pytest.fixture(scope="module")
+def ela(agg_dw):
+    return EdgeLifecycleAggregator(agg_dw, n_windows=4)
+
+
+@pytest.fixture(scope="module")
+def gsa(agg_dw):
+    return GraphSnapshotAggregator(agg_dw, n_windows=4)
+
+
+@pytest.fixture(scope="module")
+def gsa_scc(agg_dw, fitted_tracker):
+    return GraphSnapshotAggregator(agg_dw, n_windows=4, scc_tracker=fitted_tracker)
+
+
+@pytest.fixture(scope="module")
+def ca(agg_dw, fitted_tracker):
+    return CommunityAggregator(agg_dw, fitted_tracker)
+
+
+@pytest.fixture(scope="module")
+def ncm(agg_dw):
+    return NodeCorrelationMatrix(agg_dw, n_windows=4, max_lag=2)
+
+
 # ---------------------------------------------------------------------------
 # 1. NodeTemporalAggregator
 # ---------------------------------------------------------------------------
 
 
 class TestNodeTemporalAggregator:
-    def test_per_window_is_dataframe(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.per_window()
+    def test_per_window_is_dataframe(self, nta):
+        df = nta.per_window()
         assert isinstance(df, pd.DataFrame)
 
-    def test_per_window_required_columns(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.per_window()
+    def test_per_window_required_columns(self, nta):
+        df = nta.per_window()
         required = {"win", "label", "node_id", "activity", "sessions", "out_degree"}
         assert required.issubset(set(df.columns))
 
-    def test_per_window_has_n_windows_per_node(self, agg_dw):
+    def test_per_window_has_n_windows_per_node(self, nta):
         n = 4
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=n)
-        df = agg.per_window()
+        df = nta.per_window()
         # Each win value should be between 0 and n-1
         assert df["win"].min() >= 0
         assert df["win"].max() <= n - 1
 
-    def test_rollup_is_dataframe(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_is_dataframe(self, nta):
+        df = nta.rollup()
         assert isinstance(df, pd.DataFrame)
 
-    def test_rollup_required_columns(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_required_columns(self, nta):
+        df = nta.rollup()
         required = {
             "node_id",
             "first_window",
@@ -91,39 +116,33 @@ class TestNodeTemporalAggregator:
         }
         assert required.issubset(set(df.columns))
 
-    def test_rollup_status_valid_values(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_status_valid_values(self, nta):
+        df = nta.rollup()
         valid = {"active", "churned", "emerging", "absent"}
         assert set(df["status"].unique()).issubset(valid)
 
-    def test_rollup_activity_nonnegative(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_activity_nonnegative(self, nta):
+        df = nta.rollup()
         assert (df["total_activity"] >= 0).all()
         assert (df["active_windows"] >= 0).all()
 
-    def test_rollup_sorted_by_total_activity(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_sorted_by_total_activity(self, nta):
+        df = nta.rollup()
         acts = df["total_activity"].tolist()
         assert acts == sorted(acts, reverse=True)
 
-    def test_known_items_in_rollup(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_known_items_in_rollup(self, nta):
+        df = nta.rollup()
         assert "X" in df["node_id"].values  # bridge node always present
 
-    def test_emerging_nodes_detected(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_emerging_nodes_detected(self, nta):
+        df = nta.rollup()
         emerging = df[df["status"] == "emerging"]["node_id"].tolist()
         # Late-cluster items G, H, I are expected to emerge
         assert any(item in emerging for item in ["G", "H", "I"])
 
-    def test_churned_nodes_detected(self, agg_dw):
-        agg = NodeTemporalAggregator(agg_dw.conn, agg_dw.table_name, n_windows=4)
-        df = agg.rollup()
+    def test_churned_nodes_detected(self, nta):
+        df = nta.rollup()
         churned = df[df["status"] == "churned"]["node_id"].tolist()
         # Early-cluster items A, B, C are expected to churn
         assert any(item in churned for item in ["A", "B", "C"])
@@ -135,20 +154,17 @@ class TestNodeTemporalAggregator:
 
 
 class TestEdgeLifecycleAggregator:
-    def test_per_window_delegates(self, agg_dw):
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=4)
-        df = agg.per_window()
+    def test_per_window_delegates(self, ela):
+        df = ela.per_window()
         assert isinstance(df, pd.DataFrame)
         assert set(df.columns) >= {"window", "label", "source", "target", "weight"}
 
-    def test_rollup_is_dataframe(self, agg_dw):
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_is_dataframe(self, ela):
+        df = ela.rollup()
         assert isinstance(df, pd.DataFrame)
 
-    def test_rollup_required_columns(self, agg_dw):
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_required_columns(self, ela):
+        df = ela.rollup()
         required = {
             "source",
             "target",
@@ -165,29 +181,25 @@ class TestEdgeLifecycleAggregator:
         }
         assert required.issubset(set(df.columns))
 
-    def test_rollup_edge_kind_valid(self, agg_dw):
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=4)
-        df = agg.rollup()
+    def test_rollup_edge_kind_valid(self, ela):
+        df = ela.rollup()
         valid = {"persistent", "transient", "sporadic"}
         assert set(df["edge_kind"].unique()).issubset(valid)
 
-    def test_stability_range(self, agg_dw):
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=4)
-        df = agg.rollup()
+    def test_stability_range(self, ela):
+        df = ela.rollup()
         assert (df["stability"] >= 0.0).all()
         assert (df["stability"] <= 1.0 + 1e-9).all()
 
-    def test_persistent_edges_appear_in_most_windows(self, agg_dw):
+    def test_persistent_edges_appear_in_most_windows(self, ela):
         n = 4
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=n)
-        df = agg.rollup()
+        df = ela.rollup()
         persistent = df[df["edge_kind"] == "persistent"]
         if not persistent.empty:
             assert (persistent["active_windows"] > n * 0.5).all()
 
-    def test_transient_edges_appear_once(self, agg_dw):
-        agg = EdgeLifecycleAggregator(agg_dw, n_windows=4)
-        df = agg.rollup()
+    def test_transient_edges_appear_once(self, ela):
+        df = ela.rollup()
         transient = df[df["edge_kind"] == "transient"]
         if not transient.empty:
             assert (transient["active_windows"] == 1).all()
@@ -199,57 +211,48 @@ class TestEdgeLifecycleAggregator:
 
 
 class TestGraphSnapshotAggregator:
-    def test_compute_is_dataframe(self, agg_dw):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4)
-        df = agg.compute()
+    def test_compute_is_dataframe(self, gsa):
+        df = gsa.compute()
         assert isinstance(df, pd.DataFrame)
 
-    def test_compute_has_n_windows_rows(self, agg_dw):
+    def test_compute_has_n_windows_rows(self, gsa):
         n = 4
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=n)
-        df = agg.compute()
+        df = gsa.compute()
         assert len(df) == n
 
-    def test_compute_required_columns(self, agg_dw):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4)
-        df = agg.compute()
+    def test_compute_required_columns(self, gsa):
+        df = gsa.compute()
         required = {"win", "label", "n_nodes", "n_edges", "density", "n_sessions"}
         assert required.issubset(set(df.columns))
 
-    def test_density_range(self, agg_dw):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4)
-        df = agg.compute()
+    def test_density_range(self, gsa):
+        df = gsa.compute()
         valid = df["density"].dropna()
         assert (valid >= 0.0).all()
         assert (valid <= 1.0 + 1e-9).all()
 
-    def test_n_nodes_positive(self, agg_dw):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4)
-        df = agg.compute()
+    def test_n_nodes_positive(self, gsa):
+        df = gsa.compute()
         assert (df["n_nodes"] > 0).all()
 
-    def test_with_scc_tracker(self, agg_dw, fitted_tracker):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4, scc_tracker=fitted_tracker)
-        df = agg.compute()
+    def test_with_scc_tracker(self, gsa_scc):
+        df = gsa_scc.compute()
         assert "n_sccs" in df.columns
         assert "scc_coverage" in df.columns
 
-    def test_scc_coverage_range(self, agg_dw, fitted_tracker):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4, scc_tracker=fitted_tracker)
-        df = agg.compute()
+    def test_scc_coverage_range(self, gsa_scc):
+        df = gsa_scc.compute()
         cov = df["scc_coverage"].dropna()
         assert (cov >= 0.0).all()
         assert (cov <= 1.0 + 1e-9).all()
 
-    def test_without_scc_tracker(self, agg_dw):
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4, scc_tracker=None)
-        df = agg.compute()
+    def test_without_scc_tracker(self, gsa):
+        df = gsa.compute()
         assert df["n_sccs"].isna().all()
 
-    def test_node_conservation(self, agg_dw):
+    def test_node_conservation(self, gsa):
         """n_nodes[i] == n_nodes[i-1] + new_nodes[i] - churned_nodes[i]."""
-        agg = GraphSnapshotAggregator(agg_dw, n_windows=4)
-        df = agg.compute().reset_index(drop=True)
+        df = gsa.compute().reset_index(drop=True)
         for i in range(1, len(df)):
             expected = (
                 df.loc[i - 1, "n_nodes"] + df.loc[i, "new_nodes"] - df.loc[i, "churned_nodes"]
@@ -265,14 +268,12 @@ class TestGraphSnapshotAggregator:
 
 
 class TestCommunityAggregator:
-    def test_compute_is_dataframe(self, agg_dw, fitted_tracker):
-        agg = CommunityAggregator(agg_dw, fitted_tracker)
-        df = agg.compute()
+    def test_compute_is_dataframe(self, ca):
+        df = ca.compute()
         assert isinstance(df, pd.DataFrame)
 
-    def test_compute_required_columns(self, agg_dw, fitted_tracker):
-        agg = CommunityAggregator(agg_dw, fitted_tracker)
-        df = agg.compute()
+    def test_compute_required_columns(self, ca):
+        df = ca.compute()
         required = {
             "window",
             "window_label",
@@ -285,20 +286,17 @@ class TestCommunityAggregator:
         }
         assert required.issubset(set(df.columns))
 
-    def test_cohesion_range(self, agg_dw, fitted_tracker):
-        agg = CommunityAggregator(agg_dw, fitted_tracker)
-        df = agg.compute()
+    def test_cohesion_range(self, ca):
+        df = ca.compute()
         assert (df["cohesion"] >= 0.0).all()
 
-    def test_size_positive(self, agg_dw, fitted_tracker):
-        agg = CommunityAggregator(agg_dw, fitted_tracker)
-        df = agg.compute()
+    def test_size_positive(self, ca):
+        df = ca.compute()
         if not df.empty:
             assert (df["size"] > 0).all()
 
-    def test_n_bridge_nodes_nonnegative(self, agg_dw, fitted_tracker):
-        agg = CommunityAggregator(agg_dw, fitted_tracker)
-        df = agg.compute()
+    def test_n_bridge_nodes_nonnegative(self, ca):
+        df = ca.compute()
         assert (df["n_bridge_nodes"] >= 0).all()
 
 
@@ -308,61 +306,52 @@ class TestCommunityAggregator:
 
 
 class TestNodeCorrelationMatrix:
-    def test_synchrony_is_dataframe(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4)
-        df = corr.synchrony()
+    def test_synchrony_is_dataframe(self, ncm):
+        df = ncm.synchrony()
         assert isinstance(df, pd.DataFrame)
 
-    def test_synchrony_is_square(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4)
-        df = corr.synchrony()
+    def test_synchrony_is_square(self, ncm):
+        df = ncm.synchrony()
         assert df.shape[0] == df.shape[1]
 
-    def test_synchrony_diagonal_is_one(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4)
-        df = corr.synchrony()
+    def test_synchrony_diagonal_is_one(self, ncm):
+        df = ncm.synchrony()
         import numpy as np
 
         diag = df.values.diagonal()
         assert all(abs(v - 1.0) < 1e-6 for v in diag if not np.isnan(v))
 
-    def test_synchrony_range(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4)
-        df = corr.synchrony()
+    def test_synchrony_range(self, ncm):
+        df = ncm.synchrony()
         import numpy as np
 
         vals = df.values[~np.isnan(df.values)]
         assert (vals >= -1.0 - 1e-9).all()
         assert (vals <= 1.0 + 1e-9).all()
 
-    def test_leading_lagging_is_dataframe(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4, max_lag=2)
-        df = corr.leading_lagging()
+    def test_leading_lagging_is_dataframe(self, ncm):
+        df = ncm.leading_lagging()
         assert isinstance(df, pd.DataFrame)
 
-    def test_leading_lagging_columns(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4, max_lag=2)
-        df = corr.leading_lagging()
+    def test_leading_lagging_columns(self, ncm):
+        df = ncm.leading_lagging()
         if not df.empty:
             required = {"node_a", "node_b", "lag", "correlation", "relationship"}
             assert required.issubset(set(df.columns))
 
-    def test_leading_lagging_correlation_range(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4, max_lag=2)
-        df = corr.leading_lagging()
+    def test_leading_lagging_correlation_range(self, ncm):
+        df = ncm.leading_lagging()
         if not df.empty:
             assert (df["correlation"] >= -1.0 - 1e-9).all()
             assert (df["correlation"] <= 1.0 + 1e-9).all()
 
-    def test_leading_lagging_lag_positive(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4, max_lag=2)
-        df = corr.leading_lagging()
+    def test_leading_lagging_lag_positive(self, ncm):
+        df = ncm.leading_lagging()
         if not df.empty:
             assert (df["lag"] >= 1).all()
 
-    def test_leading_lagging_sorted_by_abs_correlation(self, agg_dw):
-        corr = NodeCorrelationMatrix(agg_dw, n_windows=4, max_lag=2)
-        df = corr.leading_lagging()
+    def test_leading_lagging_sorted_by_abs_correlation(self, ncm):
+        df = ncm.leading_lagging()
         if len(df) > 1:
             abs_corrs = df["correlation"].abs().tolist()
             assert abs_corrs == sorted(abs_corrs, reverse=True)

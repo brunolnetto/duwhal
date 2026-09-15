@@ -135,10 +135,16 @@ class NodeTemporalAggregator:
         self.n_windows = n_windows
         self.min_cooccurrence = min_cooccurrence
         self._wb = _WindowBuilder(conn, table_name, n_windows)
+        self._pw_cache: Optional[pd.DataFrame] = None
 
     def per_window(self) -> pd.DataFrame:
+        if self._pw_cache is None:
+            self._pw_cache = self._compute_per_window()
+        return self._pw_cache
+
+    def _compute_per_window(self) -> pd.DataFrame:
         wins_cte = self._wb.cte_sql()
-        df = self.conn.query(f"""
+        return self.conn.query(f"""
         WITH {wins_cte},
         activity AS (
             SELECT w.win, w.label, i.node_id,
@@ -162,7 +168,6 @@ class NodeTemporalAggregator:
         FROM activity a LEFT JOIN out_deg d USING(win, node_id)
         ORDER BY a.node_id, a.win
         """).to_pandas()
-        return df
 
     def rollup(self) -> pd.DataFrame:
         pw = self.per_window()

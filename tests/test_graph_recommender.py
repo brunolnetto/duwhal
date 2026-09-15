@@ -153,3 +153,22 @@ class TestDuwhalGraphAPI:
         assert db._graph is not None
         assert db._graph._built
 
+    def test_graph_recommender_reuses_prepared_edges(self, duwhal_instance):
+        db = duwhal_instance
+        db.fit_graph(min_cooccurrence=1)
+        graph = db._graph_model
+
+        assert graph.prepare_edges_calls == 0
+
+        db.recommend_graph(["milk"], scoring="frequency")
+        assert graph.prepare_edges_calls == 1
+
+        db.recommend_graph(["bread"], scoring="frequency")
+        assert graph.prepare_edges_calls == 1
+
+        db.recommend_graph(["milk"], scoring="probability")
+        assert graph.prepare_edges_calls == 2
+
+        db.recommend_graph(["bread"], scoring="probability")
+        assert graph.prepare_edges_calls == 2
+

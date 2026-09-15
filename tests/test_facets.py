@@ -16,7 +16,7 @@ from duwhal.core.facets import (
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def raw_df():
     return pd.DataFrame(
         {
@@ -323,50 +323,45 @@ class TestLoadInteractionsFacetEntity:
 # recommend_by_facet — basic contract
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(scope="class")
+def coffee_recs(raw_df):
+    """Pre-computed recommend_by_facet result shared across TestRecommendByFacet."""
+    with Duwhal() as db:
+        return db.recommend_by_facet(["Coffee"], raw_df, "order_id", "item", "region", n=10)
+
+
+@pytest.fixture(scope="class")
+def fallback_suite(raw_df):
+    """Pre-computed fallback results shared across TestRecommendByFacetFallback."""
+    with Duwhal() as db:
+        return {
+            "default": db.recommend_by_facet(["Coffee"], raw_df, "order_id", "item", "region"),
+            "best": db.recommend_by_facet(["Coffee"], raw_df, "order_id", "item", "region", fallback_merge="best"),
+            "first": db.recommend_by_facet(["Coffee"], raw_df, "order_id", "item", "region", fallback_merge="first"),
+            "pasta_multi": db.recommend_by_facet(["Pasta"], raw_df, "order_id", "item", facet_cols=["region", "day_period"]),
+        }
+
+
 class TestRecommendByFacet:
 
-    def test_returns_dict(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        assert isinstance(results, dict)
+    def test_returns_dict(self, coffee_recs):
+        assert isinstance(coffee_recs, dict)
 
-    def test_global_key_always_present(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        assert "global" in results
+    def test_global_key_always_present(self, coffee_recs):
+        assert "global" in coffee_recs
 
-    def test_slice_keys_use_col_eq_val_format(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        non_global = [k for k in results if k != "global"]
+    def test_slice_keys_use_col_eq_val_format(self, coffee_recs):
+        non_global = [k for k in coffee_recs if k != "global"]
         assert all("region=" in k for k in non_global)
 
-    def test_facet_keys_present(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        assert "region=EU" in results or "region=BR" in results
+    def test_facet_keys_present(self, coffee_recs):
+        assert "region=EU" in coffee_recs or "region=BR" in coffee_recs
 
-    def test_global_result_is_arrow_table(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        assert isinstance(results["global"], pa.Table)
+    def test_global_result_is_arrow_table(self, coffee_recs):
+        assert isinstance(coffee_recs["global"], pa.Table)
 
-    def test_global_recs_correct(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region", n=10
-            )
-        items = [r["recommended_item"] for r in results["global"].to_pylist()]
+    def test_global_recs_correct(self, coffee_recs):
+        items = [r["recommended_item"] for r in coffee_recs["global"].to_pylist()]
         assert "Croissant" in items or "Granola Bar" in items
 
     def test_n_parameter_respected(self, raw_df):
@@ -383,86 +378,49 @@ class TestRecommendByFacet:
 
 class TestRecommendByFacetFallback:
 
-    def test_empty_slice_receives_fallback_not_empty_table(self, raw_df):
+    def test_empty_slice_receives_fallback_not_empty_table(self, fallback_suite):
         """Coffee never appears in EU orders.  After coarsening, the EU slice
         should fall back to the global model (non-empty) instead of returning [].
         """
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        eu_items = [r["recommended_item"] for r in results["region=EU"].to_pylist()]
+        eu_items = [r["recommended_item"] for r in fallback_suite["default"]["region=EU"].to_pylist()]
         assert len(eu_items) > 0, "EU slice should get fallback recs, not empty table"
 
-    def test_non_empty_slice_not_affected_by_fallback(self, raw_df):
+    def test_non_empty_slice_not_affected_by_fallback(self, fallback_suite):
         """BR slice has Coffee — it should use its own model, not any fallback."""
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region"
-            )
-        br_items = [r["recommended_item"] for r in results["region=BR"].to_pylist()]
+        br_items = [r["recommended_item"] for r in fallback_suite["default"]["region=BR"].to_pylist()]
         assert len(br_items) > 0
 
-    def test_multi_facet_fallback_coarsens_to_single_dimension(self, raw_df):
+    def test_multi_facet_fallback_coarsens_to_single_dimension(self, fallback_suite):
         """With facet_cols=[region, day_period]:
         EU/morning is empty for seed Pasta (EU orders only have night).
         Coarsening should find the EU (any period) slice and use it.
         """
-        # Pasta appears in EU/night but NOT in EU/morning
-        # At granularity+1: EU (any period) DOES contain Pasta → non-empty
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Pasta"], raw_df, "order_id", "item",
-                facet_cols=["region", "day_period"],
-            )
-        # The EU|morning slice does not exist in raw_df (EU only has night)
-        # But we expect no key to return an empty empty-empty table for Pasta-related seeds
         pasta_related = [
             items
-            for label, tbl in results.items()
+            for label, tbl in fallback_suite["pasta_multi"].items()
             if label != "global"
             for items in [[r["recommended_item"] for r in tbl.to_pylist()]]
             if len(items) > 0
         ]
         assert len(pasta_related) > 0
 
-    def test_fallback_merge_union_is_default(self, raw_df):
+    def test_fallback_merge_union_is_default(self, fallback_suite):
         """Triggering a multi-candidate fallback should not crash with the default merge."""
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region",
-                fallback_merge="union",
-            )
-        assert isinstance(results["region=EU"], pa.Table)
+        assert isinstance(fallback_suite["default"]["region=EU"], pa.Table)
 
-    def test_fallback_merge_best(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region",
-                fallback_merge="best",
-            )
-        assert isinstance(results["region=EU"], pa.Table)
+    def test_fallback_merge_best(self, fallback_suite):
+        assert isinstance(fallback_suite["best"]["region=EU"], pa.Table)
 
-    def test_fallback_merge_first(self, raw_df):
-        with Duwhal() as db:
-            results = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", "region",
-                fallback_merge="first",
-            )
-        assert isinstance(results["region=EU"], pa.Table)
+    def test_fallback_merge_first(self, fallback_suite):
+        assert isinstance(fallback_suite["first"]["region=EU"], pa.Table)
 
-    def test_list_facet_cols_accepted(self, raw_df):
+    def test_list_facet_cols_accepted(self, fallback_suite, raw_df):
         """Passing facet_cols as a list should work identically to a string."""
         with Duwhal() as db:
             results_list = db.recommend_by_facet(
                 ["Coffee"], raw_df, "order_id", "item", facet_cols=["region"]
             )
-            results_str = db.recommend_by_facet(
-                ["Coffee"], raw_df, "order_id", "item", facet_cols="region"
-            )
-        assert set(results_list.keys()) == set(results_str.keys())
-
-
+        assert set(results_list.keys()) == set(fallback_suite["default"].keys())
 # ---------------------------------------------------------------------------
 # validate_disjoint
 # ---------------------------------------------------------------------------

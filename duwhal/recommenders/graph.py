@@ -14,11 +14,18 @@ class GraphRecommender:
         self.conn, self.table_name = conn, table_name
         self.min_cooccurrence, self.alpha = min_cooccurrence, alpha
         self._built = False
+        self._prepared_scoring: str | None = None
+        self._prepare_edges_calls = 0
+
+    @property
+    def prepare_edges_calls(self) -> int:
+        return self._prepare_edges_calls
 
     def build(self) -> GraphRecommender:
         self.conn.execute(f"CREATE OR REPLACE TEMP TABLE _item_totals AS SELECT node_id, COUNT(*) AS total_interactions FROM {self.table_name} GROUP BY 1")
         self.conn.execute(f"CREATE OR REPLACE TABLE _item_adjacency AS SELECT item_a AS source, list(item_b) AS neighbors, list(cooc) AS weights FROM (SELECT a.node_id AS item_a, b.node_id AS item_b, COUNT(*) AS cooc FROM {self.table_name} a JOIN {self.table_name} b ON a.set_id = b.set_id AND a.node_id != b.node_id GROUP BY 1, 2 HAVING cooc >= {self.min_cooccurrence}) GROUP BY 1")
         self._built = True
+        self._prepared_scoring = None
         return self
 
     def get_neighbors(self, item_id: str) -> pa.Table:
@@ -28,11 +35,18 @@ class GraphRecommender:
         return self.conn.query(f"SELECT target AS neighbor, weight FROM _item_edges WHERE source = '{item_id}'")
 
     def _prepare_edges(self, scoring: str):
+        self._prepare_edges_calls += 1
         self.conn.execute("CREATE OR REPLACE TEMP TABLE _item_edges AS SELECT source, unnest(neighbors) AS target, unnest(weights) AS weight FROM _item_adjacency")
         if scoring in ["probability", "path"]:
              self.conn.execute(f"CREATE OR REPLACE TEMP TABLE _item_edges_scored AS SELECT e.*, (e.weight::DOUBLE + {self.alpha}) / (t.total_interactions + {self.alpha} * 100) AS score_val FROM _item_edges e JOIN _item_totals t ON e.source = t.node_id")
         else:
              self.conn.execute("CREATE OR REPLACE TEMP TABLE _item_edges_scored AS SELECT *, weight::DOUBLE AS score_val FROM _item_edges")
+        self._prepared_scoring = scoring
+
+    def _ensure_edges_prepared(self, scoring: str) -> None:
+        if self._prepared_scoring == scoring:
+            return
+        self._prepare_edges(scoring)
 
     def _build_traversal_query(self, seeds_str, max_depth, min_weight, agg, exclude, n):
         exc_sql = f"AND item NOT IN ({seeds_str})" if exclude else ""
@@ -52,7 +66,7 @@ class GraphRecommender:
 
     def recommend(self, seed_items: List[str], max_depth: int = 2, min_weight: int = 1, n: int = 10, exclude_seed: bool = True, scoring: str = "frequency") -> pa.Table:
         if not self._built: self.build()
-        self._prepare_edges(scoring)
+        self._ensure_edges_prepared(scoring)
         if not seed_items: 
             return pa.Table.from_batches([], schema=pa.schema([("recommended_item", pa.string()), ("total_strength", pa.float64()), ("min_hops", pa.int32()), ("reason", pa.string())]))
 
