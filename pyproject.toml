@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "duwhal"
-version = "0.2.1"
+version = "0.2.0"
 description = "High-Performance Interaction Graph Engine powered by DuckDB"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -38,6 +38,7 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 filterwarnings = [
     "ignore::DeprecationWarning:dateutil",
+    "ignore:fetch_arrow_table.*is deprecated:DeprecationWarning",
 ]
 
 [dependency-groups]

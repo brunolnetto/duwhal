@@ -55,7 +55,7 @@ class AssociationRules:
 
     def _fetch_refined_rules(self):
         self.last_sql_ = "WITH rules AS (SELECT a.itemset AS antecedents, b.itemset AS consequents_full, a.support AS support_a, b.support AS support_ab FROM _fi a JOIN _fi b ON b.itemset LIKE a.itemset || '|%' OR b.itemset LIKE '%|' || a.itemset OR b.itemset LIKE '%|' || a.itemset || '|%' WHERE a.length < b.length) SELECT antecedents, consequents_full, support_ab AS support, support_a FROM rules"
-        return self.conn.execute(self.last_sql_).to_arrow_table().to_pylist()
+        return self.conn.execute(self.last_sql_).fetch_arrow_table().to_pylist()
 
     def _get_empty_table(self):
         s = pa.schema([(m, pa.float64()) for m in self.METRICS] + [("antecedents", pa.string()), ("consequents", pa.string())])
