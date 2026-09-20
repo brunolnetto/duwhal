@@ -220,8 +220,6 @@ class TestLoadInteractionMatrix:
 
 
 
-from unittest.mock import MagicMock, patch
-
 
 class TestIngestionCoverage:
     def test_ingestion_load_interactions_fallback_columns(self, conn):
@@ -327,6 +325,6 @@ class TestIngestionCoverage:
         # We patch load_interactions to avoid dealing with the complex unpivot/native logic downstream
         # We only care that _resolve_set_col -> _check_nw_df -> collect_schema runs and falls back
         with patch("duwhal.core.ingestion.nw.from_native", return_value=mock_nw_df):
-             with patch("duwhal.core.ingestion.load_interactions", return_value=1) as mock_load:
+             with patch("duwhal.core.ingestion.load_interactions", return_value=1):
                  count = load_interaction_matrix(conn, pd.DataFrame({"set_id": [1]}))
                  assert count == 1

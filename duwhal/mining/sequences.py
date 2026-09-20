@@ -55,7 +55,7 @@ class SequentialPatterns:
              table = self.table_name
 
         query = f"""
-        SELECT 
+        SELECT
             a.node_id AS prefix,
             b.node_id AS suffix,
             a.node_id || ' -> ' || b.node_id AS pattern,

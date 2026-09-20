@@ -20,7 +20,7 @@ def generate_3scc_dataset(
     """
     Generate a synthetic transaction dataset with exactly 3 sink SCCs,
     some transient bridge nodes, and held-out test baskets.
-    
+
     Structure:
     - SCC-0: nodes 0..19 (e.g. "retro" product cluster)
     - SCC-1: nodes 20..39 (e.g. "modern" product cluster)

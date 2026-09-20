@@ -1,5 +1,9 @@
 """Tests for DuckDB connection management."""
 
+from unittest.mock import MagicMock, patch
+
+import pyarrow as pa
+
 from duwhal.core.connection import DuckDBConnection
 
 
@@ -70,9 +74,6 @@ class TestDuckDBConnection:
             result = conn.execute("SELECT v FROM t").fetchone()
             assert result[0] == 99
 
-from unittest.mock import MagicMock, patch
-
-import pyarrow as pa
 
 
 class TestConnectionCoverage:

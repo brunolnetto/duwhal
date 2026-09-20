@@ -17,7 +17,6 @@ def temporal_split(df: Any, timestamp_col: str, test_fraction: float = 0.2, set_
         # Respect groupings: find the split time that roughly gives test_fraction of sets
         sets = nw_df.select(set_col).unique()
         split_idx = int(len(sets) * (1 - test_fraction))
-        pivot_set = sets[split_idx, set_col]
         # Find first occurrence of this set to get a clean split time or just use the set list
         train_sets = sets[:split_idx, set_col]
         return (
