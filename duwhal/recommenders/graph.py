@@ -52,7 +52,7 @@ class GraphRecommender:
             HAVING cooc >= {self.min_cooccurrence}
         """)
 
-        self.conn.execute(f"""
+        self.conn.execute("""
             CREATE OR REPLACE TABLE _item_adjacency AS
             SELECT
                 source,

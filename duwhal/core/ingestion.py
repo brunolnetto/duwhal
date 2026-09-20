@@ -78,7 +78,6 @@ def _dedup_tmp_interactions(has_sort):
 
 
 def _create_new_table(conn, table_name, has_sort):
-    e = ", sort_column" if has_sort else ""
     conn.execute(f"""
         CREATE OR REPLACE TABLE {table_name} AS
         {_dedup_tmp_interactions(has_sort)}

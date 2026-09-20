@@ -19,7 +19,6 @@ class TestGraphRecommender:
         # neighbors should be a LIST type
         schema = loaded_conn.execute("DESCRIBE _item_adjacency").fetchall()
         col_names = [row[0] for row in schema]
-        col_types = [row[1] for row in schema]
 
         assert "source" in col_names
         assert "neighbors" in col_names
