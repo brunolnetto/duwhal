@@ -1,7 +1,11 @@
 from __future__ import annotations
-import pyarrow as pa
+
 from typing import Optional
+
+import pyarrow as pa
+
 from duwhal.core.connection import DuckDBConnection
+
 
 class SequentialPatterns:
     def __init__(
@@ -34,11 +38,11 @@ class SequentialPatterns:
                 raise ValueError(f"Column '{self.timestamp_col}' not found.")
 
         total_n = self.conn.execute(f"SELECT COUNT(DISTINCT set_id) FROM {self.table_name}").fetchone()[0]
-        
+
         # A then B patterns with gap logic
         gap_filter = ""
         if self.max_gap is not None:
-             # Gap is number of items between matches. 
+             # Gap is number of items between matches.
              # We need row numbers for this.
              self.conn.execute(f"""
                 CREATE OR REPLACE TEMP TABLE _tmp_seq AS
@@ -51,7 +55,7 @@ class SequentialPatterns:
              table = self.table_name
 
         query = f"""
-        SELECT 
+        SELECT
             a.node_id AS prefix,
             b.node_id AS suffix,
             a.node_id || ' -> ' || b.node_id AS pattern,

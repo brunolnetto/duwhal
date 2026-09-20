@@ -5,8 +5,10 @@ Datasets for market basket analysis, cross-sell/upsell patterns, and
 recommendation benchmarking.
 """
 from __future__ import annotations
-import pandas as pd
+
 from typing import Optional
+
+import pandas as pd
 
 
 def generate_retail_transactions(seed: Optional[int] = None) -> pd.DataFrame:

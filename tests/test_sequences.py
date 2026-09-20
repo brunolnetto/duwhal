@@ -1,9 +1,10 @@
 """Tests for sequential pattern mining."""
 
-import pytest
+from datetime import datetime, timedelta
+
 import pandas as pd
 import pyarrow as pa
-from datetime import datetime, timedelta
+import pytest
 
 from duwhal.core.connection import DuckDBConnection
 from duwhal.mining.sequences import SequentialPatterns

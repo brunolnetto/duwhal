@@ -1,8 +1,7 @@
 """Tests for frequent itemset mining."""
 
-import pytest
-import pandas as pd
 import pyarrow as pa
+import pytest
 
 from duwhal.mining.frequent_itemsets import FrequentItemsets
 
@@ -58,7 +57,7 @@ class TestFrequentItemsets:
         fi = FrequentItemsets(loaded_conn, min_support=0.1)
         result = fi.fit()
         rows = result.to_pylist()
-        
+
         # itemset stored sorted pipe-delimited
         match = next((r for r in rows if r["itemset"] in ["bread|milk", "milk|bread"] and r["length"] == 2), None)
         assert match is not None
@@ -116,7 +115,7 @@ class TestFrequentItemsets:
         # Build graph first to create _item_adjacency
         gr = GraphRecommender(loaded_conn)
         gr.build()
-        
+
         fi = FrequentItemsets(loaded_conn, min_support=0.1)
         # This should hit the optimized _create_freq2 because _item_adjacency exists
         result = fi.fit()

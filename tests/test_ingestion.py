@@ -1,11 +1,12 @@
 """Tests for data ingestion."""
 
-import pytest
-import pandas as pd
-import numpy as np
+from unittest.mock import MagicMock, patch
 
-from duwhal.core.connection import DuckDBConnection
-from duwhal.core.ingestion import load_interactions, load_interaction_matrix
+import numpy as np
+import pandas as pd
+import pytest
+
+from duwhal.core.ingestion import load_interaction_matrix, load_interactions
 
 
 class TestLoadInteractions:
@@ -51,6 +52,8 @@ class TestLoadInteractions:
             conn, transactions_df,
             set_col="order_id", node_col="item_id"
         )
+        # Ingestion preserves the raw event stream, so appending the same batch
+        # duplicates rows; the contract is "append", not "deduplicate".
         count2 = load_interactions(
             conn, transactions_df,
             set_col="order_id", node_col="item_id",
@@ -81,11 +84,10 @@ class TestLoadInteractions:
             "item_id":  ["x",  None,  "y",  "x"],
         })
         # Use simple NaN check
-        import numpy as np
         df.replace({None: np.nan}, inplace=True)
-        
+
         count = load_interactions(
-            conn, df, 
+            conn, df,
             set_col="order_id", node_col="item_id"
         )
         # Only rows where both columns are non-null
@@ -156,7 +158,7 @@ class TestLoadInteractions:
         # Callback to convert string to something else
         def parser(x):
             return x + "_processed"
-            
+
         load_interactions(
             conn, df,
             set_col="order_id", node_col="item_id",
@@ -170,11 +172,11 @@ class TestLoadInteractions:
         # 1. Load without sort
         df1 = pd.DataFrame({"set": ["S1"], "item": ["A"]})
         load_interactions(conn, df1, set_col="set", node_col="item")
-        
+
         # 2. Append WITH sort
         df2 = pd.DataFrame({"set": ["S2"], "item": ["B"], "ts": [100]})
         load_interactions(conn, df2, set_col="set", node_col="item", sort_col="ts", append=True)
-        
+
         # Check
         res = conn.execute("SELECT set_id, node_id, sort_column FROM interactions ORDER BY set_id").fetchall()
         # S1, A, NULL
@@ -183,6 +185,25 @@ class TestLoadInteractions:
         # Use almost equal for float/int flexibility or exact check
         assert res[0][0] == "S1" and res[0][2] is None
         assert res[1][0] == "S2" and res[1][2] == 100
+
+    def test_event_stream_preserved_for_sequences(self, conn):
+        df = pd.DataFrame({
+            "order_id": ["T1", "T1", "T1"],
+            "item_id": ["A", "B", "A"],
+            "ts": ["2024-01-01 10:01", "2024-01-01 10:02", "2024-01-01 10:03"],
+        })
+        load_interactions(
+            conn, df,
+            set_col="order_id", node_col="item_id", sort_col="ts"
+        )
+        # Sequential pattern A -> B must still be detectable.
+        from duwhal.mining.sequences import SequentialPatterns
+        seq = SequentialPatterns(
+            conn, table_name="interactions", timestamp_col="sort_column", min_support=0.01
+        )
+        result = seq.fit()
+        patterns = {r["pattern"] for r in result.to_pylist()}
+        assert "A -> B" in patterns
 
 
 
@@ -195,7 +216,7 @@ class TestLoadInteractionMatrix:
             "butter": [0, 1, 0],
         }, index=["T1", "T2", "T3"])
         df.index.name = "set_id" # Help the loader find the set ID
-        
+
         count = load_interaction_matrix(conn, df)
         assert count == 5  # T1:milk+bread, T2:bread+butter, T3:milk
 
@@ -218,8 +239,6 @@ class TestLoadInteractionMatrix:
 
 
 
-from unittest.mock import MagicMock, patch
-import narwhals as nw
 
 class TestIngestionCoverage:
     def test_ingestion_load_interactions_fallback_columns(self, conn):
@@ -229,7 +248,7 @@ class TestIngestionCoverage:
         mock_nw_df.columns = ["set_id", "node_id"]
         # Allow chaining
         mock_nw_df.select.return_value.drop_nulls.return_value.with_columns.return_value = mock_nw_df
-        
+
         with patch("duwhal.core.ingestion.nw.from_native", return_value=mock_nw_df):
              with patch("duwhal.core.ingestion.nw.to_native", return_value=pd.DataFrame({"set_id": ["1"], "node_id": ["A"]})):
                  load_interactions(conn, pd.DataFrame({"set_id": ["1"], "node_id": ["A"]}), set_col="set_id", node_col="node_id")
@@ -241,19 +260,19 @@ class TestIngestionCoverage:
             columns = ["A"] # No set_id
             def reset_index(self):
                 raise ValueError("Bad index")
-        
+
         df = BadIndexDF()
-        
+
         with patch("duwhal.core.ingestion.nw.from_native") as mock_from_native:
             mock_nw_df = MagicMock()
             mock_nw_df.columns = ["A"] # No set_id
             mock_from_native.return_value = mock_nw_df
-            
+
             mock_nw_df.unpivot.return_value \
                 .filter.return_value \
                 .select.return_value \
                 .with_columns.return_value = mock_nw_df
-            
+
             with patch("duwhal.core.ingestion.nw.to_native", return_value=pd.DataFrame({"set_id": ["1"], "node_id": ["X"]})):
                 with pytest.raises(ValueError, match="Input DataFrame must have a 'set_id' column or index"):
                     load_interaction_matrix(conn, df)
@@ -267,7 +286,7 @@ class TestIngestionCoverage:
         })
         def bad_callback(x):
             raise ValueError("Boom")
-        
+
         # Should not raise because of try-except block in ingestion.py
         load_interactions(conn, df, sort_col="ts", sort_callback=bad_callback)
         assert conn.table_exists("interactions")
@@ -286,14 +305,14 @@ class TestIngestionCoverage:
         """Test DESCRIBE exception in load_interactions append mode."""
         df = pd.DataFrame({"set_id": ["S1"], "node_id": ["N1"]})
         load_interactions(conn, df)
-        
+
         # Mocking conn.execute to fail on DESCRIBE
         original_execute = conn.execute
         def mock_execute(sql, *args, **kwargs):
             if "DESCRIBE" in sql:
                 raise Exception("No describe for you")
             return original_execute(sql, *args, **kwargs)
-        
+
         with patch.object(conn, 'execute', side_effect=mock_execute):
             load_interactions(conn, df, append=True)
 
@@ -321,10 +340,10 @@ class TestIngestionCoverage:
                 return self
 
         mock_nw_df = MockNwDF()
-        
+
         # We patch load_interactions to avoid dealing with the complex unpivot/native logic downstream
         # We only care that _resolve_set_col -> _check_nw_df -> collect_schema runs and falls back
         with patch("duwhal.core.ingestion.nw.from_native", return_value=mock_nw_df):
-             with patch("duwhal.core.ingestion.load_interactions", return_value=1) as mock_load:
+             with patch("duwhal.core.ingestion.load_interactions", return_value=1):
                  count = load_interaction_matrix(conn, pd.DataFrame({"set_id": [1]}))
                  assert count == 1

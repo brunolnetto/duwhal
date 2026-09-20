@@ -3,9 +3,12 @@ Evaluation metrics for discovery and recommendation.
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any, Union, Optional
+
+from typing import Any, Dict, List
+
 import numpy as np
 import pyarrow as pa
+
 
 def _get_hits_at_k(recommended: List[Any], actual: List[Any], k: int) -> int:
     rec_k = recommended[:k]
@@ -79,8 +82,8 @@ def _evaluate_single_user(recs: List[Any], gt: List[Any], k: int, user_id: str) 
     }
 
 def evaluate_recommendations(
-    recommendations: Dict[Any, List[Any]], 
-    ground_truth: Dict[Any, List[Any]], 
+    recommendations: Dict[Any, List[Any]],
+    ground_truth: Dict[Any, List[Any]],
     k: int = 10
 ) -> pa.Table:
     all_users = sorted(list(set(recommendations.keys()).union(ground_truth.keys())))
@@ -92,12 +95,12 @@ def evaluate_recommendations(
         ]))
 
     results = [_evaluate_single_user(recommendations.get(u, []), ground_truth.get(u, []), k, u) for u in all_users]
-    
+
     # Calculate average row
     numeric_cols = ["precision", "recall", "f1", "ndcg", "ap", "hit_rate", "rr"]
     avg_row = {"user_id": "AVERAGE"}
     for col in numeric_cols:
         avg_row[col] = float(np.mean([r[col] for r in results]))
     results.append(avg_row)
-        
+
     return pa.Table.from_pylist(results)

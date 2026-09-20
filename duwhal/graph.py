@@ -1,8 +1,11 @@
 from __future__ import annotations
-from typing import List, Optional, Any
-import pyarrow as pa
+
+from typing import Any, List
+
 import narwhals as nw
+
 from duwhal.api import Duwhal
+
 
 class InteractionGraph:
     """Universal Graph Interface."""
@@ -23,10 +26,20 @@ class InteractionGraph:
         self.db.fit_graph(min_cooccurrence=min_interactions)
         return self
 
-    def rank_nodes(self, seed_nodes: List[str], steps: int = 2, scoring: str = "probability", limit: int = 10) -> Any:
-        table = self.db.recommend(seed_items=seed_nodes, strategy="graph", max_depth=steps, scoring=scoring, n=limit)
+    def rank_nodes(self, seed_nodes: List[str], steps: int = 2, scoring: str = "probability", limit: int = 10, return_paths: bool = False) -> Any:
+        table = self.db.recommend(
+            seed_items=seed_nodes,
+            strategy="graph",
+            max_depth=steps,
+            scoring=scoring,
+            n=limit,
+            return_paths=return_paths,
+        )
+        rename_map = {"recommended_item": "node", "total_strength": "score", "min_hops": "steps"}
+        if return_paths:
+            rename_map["reason"] = "path"
         nw_df = nw.from_native(table)
-        nw_df = nw_df.rename({"recommended_item": "node", "total_strength": "score", "min_hops": "steps"})
+        nw_df = nw_df.rename(rename_map)
         return nw_df.to_native()
 
     def find_equilibrium_communities(self, min_cooccurrence: int = 5, min_confidence: float = 0.0) -> Any:

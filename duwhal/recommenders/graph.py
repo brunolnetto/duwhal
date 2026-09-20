@@ -1,7 +1,12 @@
 from __future__ import annotations
+
+from typing import Any, List, Optional
+
 import pyarrow as pa
-from typing import List, Optional
+
 from duwhal.core.connection import DuckDBConnection
+from duwhal.recommenders._utils import normalize_seeds, seed_table
+
 
 class GraphRecommender:
     def __init__(
@@ -9,68 +14,231 @@ class GraphRecommender:
         conn: DuckDBConnection,
         table_name: str = "interactions",
         min_cooccurrence: int = 1,
-        alpha: float = 0.0, # Bayesian Prior
+        alpha: float = 0.0,  # Bayesian Prior
+        top_k_edges: Optional[int] = None,
     ):
         self.conn, self.table_name = conn, table_name
         self.min_cooccurrence, self.alpha = min_cooccurrence, alpha
+        self.top_k_edges = top_k_edges
         self._built = False
         self._prepared_scoring: str | None = None
         self._prepare_edges_calls = 0
+        self._stats = None
 
     @property
     def prepare_edges_calls(self) -> int:
         return self._prepare_edges_calls
 
-    def build(self) -> GraphRecommender:
-        self.conn.execute(f"CREATE OR REPLACE TEMP TABLE _item_totals AS SELECT node_id, COUNT(*) AS total_interactions FROM {self.table_name} GROUP BY 1")
-        self.conn.execute(f"CREATE OR REPLACE TABLE _item_adjacency AS SELECT item_a AS source, list(item_b) AS neighbors, list(cooc) AS weights FROM (SELECT a.node_id AS item_a, b.node_id AS item_b, COUNT(*) AS cooc FROM {self.table_name} a JOIN {self.table_name} b ON a.set_id = b.set_id AND a.node_id != b.node_id GROUP BY 1, 2 HAVING cooc >= {self.min_cooccurrence}) GROUP BY 1")
+    def _validate_params(self):
+        if self.min_cooccurrence < 1:
+            raise ValueError("min_cooccurrence must be >= 1")
+        if self.top_k_edges is not None and self.top_k_edges < 1:
+            raise ValueError("top_k_edges must be >= 1 or None")
+
+    def build(self, stats=None) -> GraphRecommender:
+        import time
+        self._validate_params()
+        start = time.perf_counter()
+        self.conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _distinct_interactions AS
+            SELECT DISTINCT set_id, node_id FROM {self.table_name}
+        """)
+        self.conn.execute("CREATE OR REPLACE TEMP TABLE _item_totals AS SELECT node_id, COUNT(DISTINCT set_id) AS total_interactions FROM _distinct_interactions GROUP BY 1")
+
+        # Unordered co-occurrence computed once, then expanded to both directions.
+        self.conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _item_unordered_pairs AS
+            SELECT
+                a.node_id AS item_a,
+                b.node_id AS item_b,
+                COUNT(DISTINCT a.set_id) AS cooc
+            FROM _distinct_interactions a
+            JOIN _distinct_interactions b
+              ON a.set_id = b.set_id
+             AND a.node_id < b.node_id
+            GROUP BY 1, 2
+            HAVING cooc >= {self.min_cooccurrence}
+        """)
+
+        self.conn.execute(f"""
+            CREATE OR REPLACE TABLE _item_adjacency AS
+            SELECT
+                source,
+                list(target ORDER BY cooc DESC, target) AS neighbors,
+                list(cooc ORDER BY cooc DESC, target) AS weights
+            FROM (
+                SELECT
+                    item_a AS source,
+                    item_b AS target,
+                    cooc,
+                    row_number() OVER (PARTITION BY item_a ORDER BY cooc DESC, item_b) AS rn_a
+                FROM _item_unordered_pairs
+                UNION ALL
+                SELECT
+                    item_b AS source,
+                    item_a AS target,
+                    cooc,
+                    row_number() OVER (PARTITION BY item_b ORDER BY cooc DESC, item_a) AS rn_b
+                FROM _item_unordered_pairs
+            ) directed
+            {f"WHERE rn_a <= {self.top_k_edges}" if self.top_k_edges else ""}
+            GROUP BY source
+        """)
+
+        prior_size = self._prior_catalog_size()
+        # Precompute edge scores for both frequency and probability/path modes.
+        self.conn.execute("""
+            CREATE OR REPLACE TABLE _item_edges_scored AS
+            SELECT
+                source,
+                unnest(neighbors) AS target,
+                unnest(weights) AS weight,
+                weight::DOUBLE AS frequency_score,
+                (weight::DOUBLE + ?) / (t.total_interactions + ? * ?) AS probability_score
+            FROM _item_adjacency
+            JOIN _item_totals t ON source = t.node_id
+        """, [self.alpha, self.alpha, prior_size])
+
         self._built = True
-        self._prepared_scoring = None
+        self._prepared_scoring = "frequency"
+        duration_ms = (time.perf_counter() - start) * 1000
+        if stats is not None:
+            stats.duration_ms = duration_ms
+            nodes = self.conn.execute("SELECT COUNT(*) FROM _item_adjacency").fetchone()[0]
+            edges = self.conn.execute("SELECT SUM(len(neighbors)) FROM _item_adjacency").fetchone()[0] or 0
+            degrees = self.conn.execute("""
+                SELECT
+                    AVG(len(neighbors)) AS mean_degree,
+                    COALESCE(MAX(len(neighbors)), 0) AS max_degree,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY len(neighbors)) AS p95_degree
+                FROM _item_adjacency
+            """).fetchone()
+            stats.table_stats = {
+                "nodes": nodes,
+                "edges": edges,
+                "mean_degree": degrees[0] or 0,
+                "p95_degree": degrees[2] or 0,
+                "max_degree": degrees[1] or 0,
+            }
+            self._stats = stats
         return self
+
+    def _prior_catalog_size(self) -> int:
+        """Number of distinct items used as the Bayesian prior denominator."""
+        total = self.conn.execute(f"SELECT COUNT(DISTINCT node_id) FROM {self.table_name}").fetchone()[0]
+        return max(total, 1)
 
     def get_neighbors(self, item_id: str) -> pa.Table:
         if not self._built: self.build()
-        try: self.conn.execute("SELECT 1 FROM _item_edges LIMIT 0")
-        except: return self.conn.query(f"SELECT item_b AS neighbor, cooc AS weight FROM (SELECT source, unnest(neighbors) AS item_b, unnest(weights) AS cooc FROM _item_adjacency) WHERE source = '{item_id}'")
-        return self.conn.query(f"SELECT target AS neighbor, weight FROM _item_edges WHERE source = '{item_id}'")
+        self.conn.register("_item_lookup", pa.Table.from_pylist([{"node_id": str(item_id)}]))
+        return self.conn.query("""
+            SELECT target AS neighbor, weight
+            FROM _item_edges_scored
+            WHERE source = (SELECT node_id FROM _item_lookup)
+        """)
 
-    def _prepare_edges(self, scoring: str):
-        self._prepare_edges_calls += 1
-        self.conn.execute("CREATE OR REPLACE TEMP TABLE _item_edges AS SELECT source, unnest(neighbors) AS target, unnest(weights) AS weight FROM _item_adjacency")
+    @staticmethod
+    def _score_column(scoring: str) -> str:
         if scoring in ["probability", "path"]:
-             self.conn.execute(f"CREATE OR REPLACE TEMP TABLE _item_edges_scored AS SELECT e.*, (e.weight::DOUBLE + {self.alpha}) / (t.total_interactions + {self.alpha} * 100) AS score_val FROM _item_edges e JOIN _item_totals t ON e.source = t.node_id")
+            return "probability_score"
+        return "frequency_score"
+
+    def _build_traversal_query(
+        self,
+        max_depth: int,
+        min_weight: int,
+        scoring: str,
+        agg: str,
+        exclude: bool,
+        n: int,
+        return_paths: bool,
+        beam_width: Optional[int],
+    ) -> str:
+        score_col = self._score_column(scoring)
+        reason_col = ", arg_max(array_to_string(path, ' -> '), strength) AS reason" if return_paths else ""
+        # Bounded walk traversal: items can be revisited.  Path state is only
+        # carried when explanations are requested, keeping the default hot path
+        # lightweight while preserving identical score semantics.
+        if return_paths:
+            frontier_cols = "item, strength, depth, path"
+            seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0, [s.node_id]"
+            expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1, list_append(t.path, e.target)"
         else:
-             self.conn.execute("CREATE OR REPLACE TEMP TABLE _item_edges_scored AS SELECT *, weight::DOUBLE AS score_val FROM _item_edges")
-        self._prepared_scoring = scoring
+            frontier_cols = "item, strength, depth"
+            seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0"
+            expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1"
 
-    def _ensure_edges_prepared(self, scoring: str) -> None:
-        if self._prepared_scoring == scoring:
-            return
-        self._prepare_edges(scoring)
-
-    def _build_traversal_query(self, seeds_str, max_depth, min_weight, agg, exclude, n):
-        exc_sql = f"AND item NOT IN ({seeds_str})" if exclude else ""
+        exc_sql = "AND item NOT IN (SELECT node_id FROM _seeds)" if exclude else ""
+        beam_sql = ""
+        if beam_width:
+            # Deterministic tie-break: target id.
+            beam_sql = f"QUALIFY row_number() OVER (PARTITION BY depth ORDER BY strength DESC, e.target) <= {beam_width}"
         return f"""
-        WITH RECURSIVE traversal(item, strength, depth, path) AS (
-            SELECT node_id, 1.0::DOUBLE/count(*) over(), 0, [node_id]
-            FROM {self.table_name} WHERE node_id IN ({seeds_str})
+        WITH RECURSIVE traversal({frontier_cols}) AS (
+            {seed_select}
+            FROM _seeds s
+            WHERE EXISTS (SELECT 1 FROM _item_totals i WHERE i.node_id = s.node_id)
             UNION ALL
-            SELECT e.target, t.strength * e.score_val, t.depth + 1, list_append(t.path, e.target)
+            {expand_select}
             FROM traversal t
             JOIN _item_edges_scored e ON t.item = e.source
-            WHERE t.depth < {max_depth} AND e.weight >= {min_weight} AND NOT list_contains(t.path, e.target)
+            WHERE t.depth < {max_depth}
+              AND e.weight >= {min_weight}
+            {beam_sql}
         )
-        SELECT item AS recommended_item, {agg}(strength) AS total_strength, MIN(depth) AS min_hops, arg_max(array_to_string(path, ' -> '), strength) AS reason
-        FROM traversal WHERE depth > 0 {exc_sql} GROUP BY 1 ORDER BY total_strength DESC LIMIT {n}
+        SELECT item AS recommended_item, {agg}(strength) AS total_strength, MIN(depth) AS min_hops {reason_col}
+        FROM traversal
+        WHERE depth > 0 {exc_sql}
+        GROUP BY item
+        ORDER BY total_strength DESC
+        LIMIT {n}
         """
 
-    def recommend(self, seed_items: List[str], max_depth: int = 2, min_weight: int = 1, n: int = 10, exclude_seed: bool = True, scoring: str = "frequency") -> pa.Table:
+    def recommend(
+        self,
+        seed_items: Any,
+        max_depth: int = 2,
+        min_weight: int = 1,
+        n: int = 10,
+        exclude_seed: bool = True,
+        scoring: str = "frequency",
+        return_paths: bool = False,
+        beam_width: Optional[int] = 200,
+    ) -> pa.Table:
         if not self._built: self.build()
-        self._ensure_edges_prepared(scoring)
-        if not seed_items: 
-            return pa.Table.from_batches([], schema=pa.schema([("recommended_item", pa.string()), ("total_strength", pa.float64()), ("min_hops", pa.int32()), ("reason", pa.string())]))
+        self._validate_params()
+        if scoring not in {"frequency", "probability", "path"}:
+            raise ValueError(f"Unknown scoring: {scoring}")
+        if n < 1:
+            raise ValueError("n must be >= 1")
+        if max_depth < 1:
+            raise ValueError("max_depth must be >= 1")
+        if min_weight < 0:
+            raise ValueError("min_weight must be >= 0")
+        if beam_width is not None and beam_width < 1:
+            raise ValueError("beam_width must be >= 1 or None")
+        seeds = normalize_seeds(seed_items)
+        if not seeds:
+            schema = [
+                ("recommended_item", pa.string()),
+                ("total_strength", pa.float64()),
+                ("min_hops", pa.int32()),
+            ]
+            if return_paths:
+                schema.append(("reason", pa.string()))
+            return pa.Table.from_batches([], schema=pa.schema(schema))
 
-        q = self._build_traversal_query(", ".join([f"'{s}'" for s in seed_items]), max_depth, min_weight, "MAX" if scoring == "path" else "SUM", exclude_seed, n)
+        self.conn.register("_seeds", seed_table(seeds))
+        q = self._build_traversal_query(
+            max_depth=max_depth,
+            min_weight=min_weight,
+            scoring=scoring,
+            agg="MAX" if scoring == "path" else "SUM",
+            exclude=exclude_seed,
+            n=n,
+            return_paths=return_paths,
+            beam_width=beam_width,
+        )
         return self.conn.query(q)
 
     def score_basket(self, items: List[str]) -> float:

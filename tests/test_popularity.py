@@ -1,9 +1,10 @@
 """Tests for popularity-based recommender."""
 
-import pytest
+from datetime import datetime, timedelta
+
 import pandas as pd
 import pyarrow as pa
-from datetime import datetime, timedelta
+import pytest
 
 from duwhal.core.connection import DuckDBConnection
 from duwhal.recommenders.popularity import PopularityRecommender
@@ -78,6 +79,15 @@ class TestPopularityRecommender:
         assert "bread" not in item_ids
         assert "milk" not in item_ids
 
+    def test_context_popularity_semantics(self, loaded_conn):
+        """Popularity counts distinct contexts, not raw events."""
+        pop = PopularityRecommender(loaded_conn)
+        pop.fit()
+        rows = pop.recommend(n=10).to_pylist()
+        scores = {r["item_id"]: r["score"] for r in rows}
+        total = sum(scores.values())
+        assert abs(total - 1.0) < 1e-6
+
     def test_auto_fit_on_recommend(self, loaded_conn):
         pop = PopularityRecommender(loaded_conn)
         # Not calling fit() explicitly
@@ -126,5 +136,24 @@ class TestPopularityRecommender:
         load_interactions(conn, df, sort_col="sort_column")
         pop = PopularityRecommender(conn, strategy="trending")
         # Should fallback to sort_column because timestamp_col is not provided
+        pop.fit()
+        assert pop._fitted
+
+    def test_decay_requires_timestamp(self, loaded_conn):
+        """decay_half_life without timestamp_col or sort_column must raise."""
+        pop = PopularityRecommender(loaded_conn, strategy="global", decay_half_life=7)
+        with pytest.raises(ValueError, match="timestamp_col"):
+            pop.fit()
+
+    def test_decay_global_sort_fallback(self, conn):
+        """decay_half_life on global strategy falls back to sort_column."""
+        from duwhal.core.ingestion import load_interactions
+        df = pd.DataFrame({
+            "set_id": ["S1", "S1"],
+            "node_id": ["A", "B"],
+            "sort_column": [datetime.now(), datetime.now()]
+        })
+        load_interactions(conn, df, sort_col="sort_column")
+        pop = PopularityRecommender(conn, strategy="global", decay_half_life=7)
         pop.fit()
         assert pop._fitted

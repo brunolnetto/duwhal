@@ -1,7 +1,11 @@
 from __future__ import annotations
-import pyarrow as pa
+
 from typing import Optional
+
+import pyarrow as pa
+
 from duwhal.core.connection import DuckDBConnection
+
 
 class FrequentItemsets:
     def __init__(
@@ -25,7 +29,7 @@ class FrequentItemsets:
 
         self.last_sql_ = f"""
             CREATE OR REPLACE TEMP TABLE _freq1 AS
-            SELECT node_id AS itemset, (COUNT(*)::DOUBLE / {total_n}) AS support, 1 AS length
+            SELECT node_id AS itemset, (COUNT(DISTINCT set_id)::DOUBLE / {total_n}) AS support, 1 AS length
             FROM {self.table_name}
             GROUP BY 1
             HAVING support >= {self.min_support}
@@ -37,10 +41,10 @@ class FrequentItemsets:
 
         self.conn.execute(f"""
             CREATE OR REPLACE TEMP TABLE _freq2 AS
-            SELECT 
-                CASE WHEN a.node_id < b.node_id THEN a.node_id || '|' || b.node_id 
+            SELECT
+                CASE WHEN a.node_id < b.node_id THEN a.node_id || '|' || b.node_id
                      ELSE b.node_id || '|' || a.node_id END AS itemset,
-                (COUNT(*)::DOUBLE / {total_n}) AS support,
+                (COUNT(DISTINCT a.set_id)::DOUBLE / {total_n}) AS support,
                 2 AS length
             FROM {self.table_name} a
             JOIN {self.table_name} b ON a.set_id = b.set_id AND a.node_id < b.node_id

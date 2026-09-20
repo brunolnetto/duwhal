@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from duwhal.core.connection import DuckDBConnection
 from duwhal.core.facets import merge_recommendation_tables, split_by_facet
 from duwhal.core.ingestion import load_interaction_matrix, load_interactions
+from duwhal.core.stats import ModelStats
 from duwhal.mining.association_rules import AssociationRules
 from duwhal.mining.frequent_itemsets import FrequentItemsets
 from duwhal.mining.sequences import SequentialPatterns
@@ -34,6 +35,7 @@ class Duwhal:
         self.conn = DuckDBConnection(database=database, memory_limit=memory_limit, threads=threads)
         self.table_name = "interactions"
         self._rules, self._cf_model, self._graph_model, self._pop_model = None, None, None, None
+        self._model_stats: list[ModelStats] = []
 
     @property
     def _graph(self) -> Optional[GraphRecommender]: return self._graph_model
@@ -79,14 +81,18 @@ class Duwhal:
         return FrequentItemsets(self.conn, table_name=self.table_name, **kwargs).fit()
 
     def association_rules(self, **kwargs) -> pa.Table:
-        self._rules = AssociationRules(self.conn, table_name=self.table_name, **kwargs).fit()
+        stats = ModelStats(model_name="association_rules", fit_params=kwargs)
+        self._rules = AssociationRules(self.conn, table_name=self.table_name, **kwargs).fit(stats=stats)
+        self._model_stats.append(stats)
         return self._rules
 
     def sequential_patterns(self, **kwargs) -> pa.Table:
         return SequentialPatterns(self.conn, table_name=self.table_name, **kwargs).fit()
 
     def fit_cf(self, **kwargs) -> Duwhal:
-        self._cf_model = ItemCF(self.conn, table_name=self.table_name, **kwargs).fit()
+        stats = ModelStats(model_name="item_cf", fit_params=kwargs)
+        self._cf_model = ItemCF(self.conn, table_name=self.table_name, **kwargs).fit(stats=stats)
+        self._model_stats.append(stats)
         return self
 
     def recommend_cf(self, *args, **kwargs) -> pa.Table:
@@ -94,7 +100,9 @@ class Duwhal:
         return self._cf_model.recommend(*args, **kwargs)
 
     def fit_graph(self, alpha: float = 0.0, **kwargs) -> Duwhal:
-        self._graph_model = GraphRecommender(self.conn, table_name=self.table_name, alpha=alpha, **kwargs).build()
+        stats = ModelStats(model_name="graph", fit_params={"alpha": alpha, **kwargs})
+        self._graph_model = GraphRecommender(self.conn, table_name=self.table_name, alpha=alpha, **kwargs).build(stats=stats)
+        self._model_stats.append(stats)
         return self
 
     def recommend_graph(self, *args, **kwargs) -> pa.Table:
@@ -106,7 +114,9 @@ class Duwhal:
         return self._graph_model.score_basket(items)
 
     def fit_popularity(self, strategy: str = "global", window_days: int = 30, **kwargs) -> Duwhal:
-        self._pop_model = PopularityRecommender(self.conn, table_name=self.table_name, strategy=strategy, window_days=window_days, **kwargs).fit()
+        stats = ModelStats(model_name="popularity", fit_params={"strategy": strategy, "window_days": window_days, **kwargs})
+        self._pop_model = PopularityRecommender(self.conn, table_name=self.table_name, strategy=strategy, window_days=window_days, **kwargs).fit(stats=stats)
+        self._model_stats.append(stats)
         return self
 
     def recommend_popular(self, *args, **kwargs) -> pa.Table:
@@ -345,7 +355,7 @@ class Duwhal:
             return pa.Table.from_batches([], schema=pa.schema([("item_id", pa.string()), ("score", pa.float64()), ("rule", pa.string())]))
         return pa.Table.from_pylist(self._filter_matches(matches, n))
 
-    def _dispatch_recommendation(self, strategy: str, seed_items: List[str], n: int, kwargs: dict) -> pa.Table:
+    def _dispatch_recommendation(self, strategy: str, seed_items: Any, n: int, kwargs: dict) -> pa.Table:
         if strategy == "graph": return self.recommend_graph(seed_items, n=n, **kwargs)
         if strategy == "cf": return self.recommend_cf(seed_items, n=n, **kwargs)
         if strategy == "rules": return self.recommend_by_rules(seed_items, n=n, **kwargs)
@@ -358,11 +368,45 @@ class Duwhal:
         if self._cf_model: return "cf"
         return "graph"
 
-    def recommend(self, seed_items: Optional[List[str]] = None, strategy: str = "auto", n: int = 10, **kwargs) -> pa.Table:
+    def recommend(self, seed_items: Optional[Any] = None, strategy: str = "auto", n: int = 10, **kwargs) -> pa.Table:
         res = self._dispatch_recommendation(self._resolve_strategy(strategy), seed_items or [], n, kwargs)
         if "item_id" in res.column_names:
             res = res.rename_columns(["recommended_item" if c == "item_id" else c for c in res.column_names])
         return res
+
+    def recommend_batch(
+        self,
+        seeds_list: list[Any],
+        strategy: str = "auto",
+        n: int = 10,
+        **kwargs,
+    ) -> list[pa.Table] | pa.Table:
+        """Generate recommendations for multiple seed baskets.
+
+        Parameters
+        ----------
+        seeds_list:
+            List of seed baskets.  Each basket may be a list of items or a
+            dict mapping item to weight.
+        strategy, n, **kwargs:
+            Forwarded to :meth:`recommend` for non-CF strategies.  For
+            ``strategy="cf"`` the model's vectorized batch inference is used.
+
+        Returns
+        -------
+        list[pa.Table] or pa.Table
+            One recommendation table per basket for non-CF strategies; a
+            single table with ``basket_id`` for CF.
+        """
+        strategy = self._resolve_strategy(strategy)
+        if strategy == "cf":
+            if not self._cf_model:
+                raise RuntimeError("Call fit_cf() first.")
+            return self._cf_model.recommend_batch(seeds_list, n=n, **kwargs)
+        return [
+            self.recommend(seed_items=seeds, strategy=strategy, n=n, **kwargs)
+            for seeds in seeds_list
+        ]
 
     def find_sink_sccs(self, min_cooccurrence: int = 5, min_confidence: float = 0.0) -> pa.Table:
         """Identifies Sink Strongly Connected Components (Equilibrium Communities)."""
@@ -440,6 +484,19 @@ class Duwhal:
         ).fit()
 
     def sql(self, query: str) -> pa.Table: return self.conn.query(query)
+
+    def model_stats(self) -> pa.Table:
+        """Return fit metadata and table statistics for all fitted models."""
+        if not self._model_stats:
+            return pa.Table.from_pylist([], schema=pa.schema([
+                ("model_name", pa.string()),
+                ("param_name", pa.string()),
+                ("param_value", pa.string()),
+                ("duration_ms", pa.float64()),
+                ("timestamp", pa.float64()),
+            ]))
+        return pa.concat_tables([s.to_arrow() for s in self._model_stats])
+
     def close(self): self.conn.close()
     def __enter__(self): return self
     def __exit__(self, *_): self.close()

@@ -1,14 +1,13 @@
 
-import pytest
-import pandas as pd
-import polars as pl
-import pyarrow as pa
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-import narwhals as nw
+
+import pandas as pd
+import pytest
+
 from duwhal import Duwhal
 from duwhal.core.connection import DuckDBConnection
-from duwhal.core.ingestion import load_interactions, load_interaction_matrix
+from duwhal.core.ingestion import load_interaction_matrix, load_interactions
+
 
 def test_factory_functions(transactions_df):
     import duwhal
@@ -22,25 +21,25 @@ def test_ingestion_file_loading(tmp_path, conn):
     pd.DataFrame({"s": ["1"], "n": ["A"]}).to_csv(csv_file, index=False)
     load_interactions(conn, csv_file, set_col="s", node_col="n", table_name="csv_test")
     assert conn.execute("SELECT COUNT(*) FROM csv_test").fetchone()[0] == 1
-    
+
     pq_file = tmp_path / "test.parquet"
     pd.DataFrame({"s": ["1"], "n": ["A"]}).to_parquet(pq_file)
     load_interactions(conn, pq_file, set_col="s", node_col="n", table_name="pq_test")
     assert conn.execute("SELECT COUNT(*) FROM pq_test").fetchone()[0] == 1
-    
+
     with pytest.raises(ValueError, match="Unsupported file type"):
         load_interactions(conn, tmp_path / "test.txt")
 
 def test_ingestion_column_standardization(conn):
     df1 = pd.DataFrame({"s": ["1"], "n": ["A"]})
     load_interactions(conn, df1, set_col="s", node_col="n", table_name="std_test")
-    
+
     df2 = pd.DataFrame({"s": ["2"], "n": ["B"], "time": [100]})
     load_interactions(conn, df2, set_col="s", node_col="n", sort_col="time", append=True, table_name="std_test")
-    
+
     # Hits _check_column_exists for target too
     load_interactions(conn, df2, set_col="s", node_col="n", sort_col="time", append=True, table_name="std_test")
-    
+
     res = conn.execute("SELECT * FROM std_test WHERE set_id='2'").fetchone()
     assert res[2] == 100 # sort_column
 
@@ -52,7 +51,7 @@ def test_ingestion_register_failure(conn):
 def test_ingestion_non_df_source(conn):
     with pytest.raises(ValueError):
         load_interaction_matrix(conn, "im definitely not a dataframe")
-        
+
     with patch("narwhals.from_native", side_effect=Exception("Not a DF")):
         load_interactions(conn, 123)
     assert conn.table_exists("interactions")
@@ -79,7 +78,7 @@ def test_matrix_unpivot_extreme_fallback(conn):
     df = pd.DataFrame({"set_id": ["S1"], "A": [1]})
     with patch("narwhals.DataFrame.unpivot", side_effect=Exception("Narwhals unpivot fail")):
         load_interaction_matrix(conn, df, table_name="unpivot_fallback")
-        
+
         mock_df = MagicMock()
         del mock_df.melt
         mock_df.unpivot.return_value = pd.DataFrame({"set_id":["S1"], "node_id":["A"], "val":[1]})
@@ -90,7 +89,7 @@ def test_matrix_native_filter_fallback(conn):
     df = pd.DataFrame({"set_id": ["S1"], "A": [1]})
     with patch("narwhals.DataFrame.filter", side_effect=Exception("NW filter fail")):
          load_interaction_matrix(conn, df, table_name="filter_fallback")
-    
+
     with patch("narwhals.DataFrame.unpivot", side_effect=Exception("Fail")):
          with patch("narwhals.DataFrame.to_native", return_value=MagicMock()):
               with pytest.raises(Exception):
@@ -134,7 +133,13 @@ def test_ingestion_sort_callback_error(conn):
     load_interactions(conn, df, sort_callback=bad_callback)
 
 def test_metrics_edge_cases():
-    from duwhal.evaluation.metrics import precision_at_k, recall_at_k, ndcg_at_k, hit_rate_at_k, average_precision
+    from duwhal.evaluation.metrics import (
+        average_precision,
+        hit_rate_at_k,
+        ndcg_at_k,
+        precision_at_k,
+        recall_at_k,
+    )
     assert precision_at_k([1], [1], 0) == 0.0
     assert ndcg_at_k([1], [1], 0) == 0.0
     assert hit_rate_at_k([1], [1], 0) == 0.0
@@ -162,7 +167,7 @@ def test_graph_recommender_unbuilt(loaded_conn):
 
 def test_path_integral_features(transactions_df):
     db = Duwhal().load(transactions_df, set_col="order_id", node_col="item_id")
-    res = db.recommend(["milk"], strategy="graph", scoring="path")
+    res = db.recommend(["milk"], strategy="graph", scoring="path", return_paths=True)
     assert "reason" in res.column_names
     assert "milk ->" in res.to_pylist()[0]["reason"]
     db.fit_graph(alpha=1.0)
@@ -181,7 +186,7 @@ def test_association_rules_max_len_coverage(loaded_conn):
     assert rules.num_rows == 0
 
 def test_splitting_no_set_col():
-    from duwhal.evaluation.splitting import temporal_split, random_split
+    from duwhal.evaluation.splitting import random_split, temporal_split
     df = pd.DataFrame({"A": range(10), "ts": range(10)})
     t1, t2 = temporal_split(df, "ts", test_fraction=0.2)
     assert len(t1) == 8

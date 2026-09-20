@@ -1,11 +1,11 @@
 """Tests for train/test splitting strategies."""
 
-import pytest
-import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 
-from duwhal.evaluation.splitting import temporal_split, random_split
+import pandas as pd
+import pytest
+
+from duwhal.evaluation.splitting import random_split, temporal_split
 
 
 @pytest.fixture

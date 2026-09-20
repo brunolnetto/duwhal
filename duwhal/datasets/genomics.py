@@ -4,9 +4,11 @@ duwhal.datasets.genomics — Genomics and biomedical co-occurrence generators.
 Datasets for gene co-occurrence analysis and mutation trajectory modelling.
 """
 from __future__ import annotations
+
+from typing import Optional
+
 import numpy as np
 import pandas as pd
-from typing import Optional
 
 
 def generate_genomics_data(

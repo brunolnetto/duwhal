@@ -17,14 +17,14 @@ Domains
 - **temporal**: Time-variant interaction data for temporal algorithm benchmarking
 """
 
-from .scc_synthetic import generate_3scc_dataset
-from .retail import generate_retail_transactions, generate_benchmark_patterns
-from .media import generate_playlist_data
 from .genomics import generate_genomics_data
+from .media import generate_playlist_data
 from .nlp import generate_nlp_corpus
-from .social import generate_filter_bubble_data
+from .retail import generate_benchmark_patterns, generate_retail_transactions
 from .scaling import generate_large_scale_data
-from .temporal import generate_temporal_interactions, generate_directed_sequence_data
+from .scc_synthetic import generate_3scc_dataset
+from .social import generate_filter_bubble_data
+from .temporal import generate_directed_sequence_data, generate_temporal_interactions
 
 __all__ = [
     # SCC / Path Integral

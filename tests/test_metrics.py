@@ -1,20 +1,18 @@
 """Tests for evaluation metrics."""
 
-import pytest
-import numpy as np
-import pandas as pd
 import pyarrow as pa
+import pytest
 
 from duwhal.evaluation.metrics import (
+    average_precision,
+    catalogue_coverage,
+    evaluate_recommendations,
+    f1_at_k,
+    hit_rate_at_k,
+    ndcg_at_k,
     precision_at_k,
     recall_at_k,
-    f1_at_k,
-    average_precision,
-    ndcg_at_k,
-    hit_rate_at_k,
     reciprocal_rank,
-    evaluate_recommendations,
-    catalogue_coverage,
 )
 
 
