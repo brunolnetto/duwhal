@@ -5,22 +5,22 @@ Demonstrates how to use `duwhal` to discover upsell opportunities and bundle pac
 using Association Rules and Sequential Patterns.
 """
 
-import pandas as pd
 from duwhal import Duwhal
 from duwhal.datasets import generate_retail_transactions
 
+
 def market_basket_analysis():
     df = generate_retail_transactions()
-    
+
     print("--- Retail Business Insights ---")
     with Duwhal() as db:
         db.load_interactions(df, set_col="order_id", node_col="item_name", sort_col="timestamp")
-        
+
         # 1. Discover Product Bundles (Association Rules)
         # We want to find which items 'drag' others into the basket
         print("\n[Strategy 1] Identifying Product Bundles (Association Rules):")
         rules = db.association_rules(min_support=0.01, min_confidence=0.5, min_lift=1.2)
-        
+
         # Sort by Lift to find the strongest correlations (not just popular items)
         for rule in rules.to_pylist()[:5]:
             print(f"Rule: {rule['antecedents']} => {rule['consequents']} (Lift: {rule['lift']:.2f}, Conf: {rule['confidence']:.2f})")

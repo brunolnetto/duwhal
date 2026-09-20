@@ -3,10 +3,12 @@ propagator/montecarlo.py — MCMC path sampler for the propagator.
 Estimates K(A, B; T) by sampling random walk trajectories and recording paths.
 """
 from __future__ import annotations
+
+from collections import defaultdict
+from typing import Dict, List, Optional
+
 import numpy as np
 from scipy import sparse
-from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
 
 
 def sample_propagator(

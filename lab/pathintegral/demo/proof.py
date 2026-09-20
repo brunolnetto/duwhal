@@ -10,25 +10,27 @@ This script:
 5. Prints the theorem summary with numerical findings
 """
 from __future__ import annotations
+
 import sys
-import numpy as np
-import pandas as pd
+
+from examples.pathintegral.graph.scc import find_sink_sccs
+from examples.pathintegral.propagator.approximation import (
+    basket_completion_accuracy,
+    compute_rank_r_propagator,
+    residual_sweep,
+)
+from examples.pathintegral.propagator.montecarlo import sample_propagator
 
 # --- duwhal is the foundation ---
 from duwhal import Duwhal
+from duwhal.datasets import generate_3scc_dataset
+from examples.pathintegral.evaluation import run_all_structural_tests
 
 # --- pathintegral modules build on top ---
 from examples.pathintegral.graph import build_transition_matrix, validate_transition_matrix
-from examples.pathintegral.graph.scc import find_sink_sccs, hierarchical_decompose
-from examples.pathintegral.propagator import compute_propagator, propagator_sweep, recommend_from_propagator
-from examples.pathintegral.propagator.approximation import (
-    compute_rank_r_propagator,
-    residual_sweep,
-    basket_completion_accuracy,
+from examples.pathintegral.propagator import (
+    propagator_sweep,
 )
-from examples.pathintegral.propagator.montecarlo import sample_propagator
-from examples.pathintegral.evaluation import run_all_structural_tests
-from duwhal.datasets import generate_3scc_dataset
 
 
 def run_proof():
@@ -143,7 +145,7 @@ def run_proof():
         acc = basket_completion_accuracy(K_cache[T], test_baskets, n_rec=10)
         accuracy_exact.append(acc)
 
-    print(f"  Exact propagator accuracy:")
+    print("  Exact propagator accuracy:")
     for T, acc in zip(T_values, accuracy_exact):
         print(f"    T={T:>5.1f}: hit@10 = {acc:.3f}")
 
@@ -164,7 +166,7 @@ def run_proof():
         mc_result = sample_propagator(P, idx[seed_node], T=5.0, n_samples=5000, reverse_index=rev)
         top_mc = sorted(mc_result["scores"].items(), key=lambda x: -x[1])[:5]
         print(f"  Seed: {seed_node}")
-        print(f"  Top-5 MC recommendations:")
+        print("  Top-5 MC recommendations:")
         for item, score in top_mc:
             print(f"    {item}: {score:.4f}")
             if item in mc_result["paths"]:

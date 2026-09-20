@@ -4,10 +4,11 @@ Wraps duwhal.SinkSCCFinder for the algorithmic heavy-lifting, adds spectral
 cross-validation and hierarchical decomposition.
 """
 from __future__ import annotations
+
+from typing import Dict, List, Tuple
+
 import numpy as np
 from scipy import sparse
-from scipy.sparse.linalg import eigs
-from typing import Dict, List, Set, Tuple, Optional
 
 
 def find_sink_sccs(

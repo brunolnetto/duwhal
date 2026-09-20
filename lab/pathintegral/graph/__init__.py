@@ -3,9 +3,12 @@ graph/builder.py — Builds the directed weighted transition matrix P from duwha
 Delegates co-occurrence counting to DuckDB, then exports as scipy sparse.
 """
 from __future__ import annotations
+
+from typing import Dict, Optional, Tuple
+
 import numpy as np
 from scipy import sparse
-from typing import Dict, Tuple, Optional
+
 from duwhal import Duwhal
 
 
@@ -77,7 +80,7 @@ def _normalize_with_smoothing(
     """Row-normalize count matrix with Dirichlet smoothing."""
     rows, cols, vals = [], [], []
     C_dense = C.toarray()  # For moderate catalogs; for huge ones use sparse ops
-    
+
     for i in range(n):
         row = C_dense[i]
         # Only add alpha to observed (nonzero) entries to maintain sparsity
@@ -104,10 +107,10 @@ def validate_transition_matrix(P: sparse.csr_matrix, tol: float = 1e-6) -> Dict:
     """Validate structural properties of the transition matrix."""
     n = P.shape[0]
     row_sums = np.array(P.sum(axis=1)).flatten()
-    
+
     # Only check rows that have any edges
     active_rows = row_sums > tol
-    
+
     checks = {
         "rows_sum_to_1": bool(np.allclose(row_sums[active_rows], 1.0, atol=tol)),
         "no_negative": bool((P.data >= 0).all()) if len(P.data) > 0 else True,

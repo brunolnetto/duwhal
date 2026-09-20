@@ -3,10 +3,12 @@ propagator/exact.py — Exact matrix exponentiation propagator.
 K(T) = expm(L * T) where L = P - I is the graph Laplacian.
 """
 from __future__ import annotations
+
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 from scipy import sparse
 from scipy.linalg import expm
-from typing import Dict, List, Tuple, Optional
 
 
 def compute_propagator(

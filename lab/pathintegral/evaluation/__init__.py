@@ -3,11 +3,14 @@ evaluation/structural.py — Structural tests for path-integral properties.
 These tests verify mathematical consistency, independent of recommendation accuracy.
 """
 from __future__ import annotations
-import numpy as np
-from scipy import sparse
+
 from typing import Dict, List, Tuple
-from examples.pathintegral.propagator import compute_propagator, propagator_sweep
+
+import numpy as np
 from examples.pathintegral.graph.scc import find_sink_sccs
+from scipy import sparse
+
+from examples.pathintegral.propagator import compute_propagator, propagator_sweep
 
 
 def test_chapman_kolmogorov(

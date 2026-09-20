@@ -222,3 +222,524 @@ class TestDuwhalGraphAPI:
         db.recommend_graph(["bread"], scoring="probability")
         assert graph.prepare_edges_calls == 0
 
+def test_return_paths_preserves_recommendation_semantics(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+        top_k_edges=100,
+    )
+
+    gr.build()
+
+    pathless = gr.recommend(
+        ["milk"],
+        max_depth=3,
+        n=20,
+        scoring="probability",
+        beam_width=50,
+        return_paths=False,
+    ).to_pandas()
+
+    explained = gr.recommend(
+        ["milk"],
+        max_depth=3,
+        n=20,
+        scoring="probability",
+        beam_width=50,
+        return_paths=True,
+    ).to_pandas()
+
+    import numpy as np
+
+    assert (
+        pathless[
+            "recommended_item"
+        ].tolist()
+        ==
+        explained[
+            "recommended_item"
+        ].tolist()
+    )
+
+    assert (
+        pathless[
+            "min_hops"
+        ].tolist()
+        ==
+        explained[
+            "min_hops"
+        ].tolist()
+    )
+
+    assert np.allclose(
+        pathless[
+            "total_strength"
+        ].to_numpy(),
+        explained[
+            "total_strength"
+        ].to_numpy(),
+        rtol=1e-12,
+        atol=1e-15,
+    )
+
+    assert (
+        "reason"
+        not in pathless.columns
+    )
+
+    assert (
+        "reason"
+        in explained.columns
+    )
+
+@pytest.mark.slow
+def test_iterative_frontier_many_recommendations(
+    conn,
+):
+    import numpy as np
+    import pandas as pd
+
+    from duwhal.core.ingestion import (
+        load_interactions,
+    )
+
+    rng = np.random.default_rng(
+        42
+    )
+
+    rows = []
+
+    for context in range(
+        2_000
+    ):
+        items = rng.choice(
+            500,
+            size=12,
+            replace=False,
+        )
+
+        for item in items:
+            rows.append(
+                {
+                    "context":
+                        f"c{context}",
+                    "item":
+                        f"i{item}",
+                }
+            )
+
+    df = pd.DataFrame(
+        rows
+    )
+
+    load_interactions(
+        conn,
+        df,
+        set_col="context",
+        node_col="item",
+    )
+
+    gr = GraphRecommender(
+        conn,
+        min_cooccurrence=2,
+        top_k_edges=100,
+    )
+
+    gr.build()
+
+    for item in range(
+        200
+    ):
+        result = gr.recommend(
+            [
+                f"i{item % 500}"
+            ],
+            max_depth=2,
+            n=10,
+            scoring="probability",
+            beam_width=200,
+        )
+
+        assert (
+            result.num_rows
+            <= 10
+        )
+
+def _batch_rows_for(
+    table: pa.Table,
+    basket_id: int,
+) -> list[dict]:
+    """
+    Extract one basket from a graph batch result and remove basket_id
+    so it can be compared directly with scalar Graph output.
+    """
+    return [
+        {
+            key: value
+            for key, value in row.items()
+            if key != "basket_id"
+        }
+        for row in table.to_pylist()
+        if row["basket_id"] == basket_id
+    ]
+
+
+def test_graph_batch_matches_scalar_basic(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk"],
+        ["bread"],
+        ["butter"],
+    ]
+
+    batch = gr.recommend_batch(
+        baskets,
+        max_depth=2,
+        n=10,
+        scoring="frequency",
+        beam_width=20,
+    )
+
+    for basket_id, seeds in enumerate(baskets):
+        scalar = gr.recommend(
+            seeds,
+            max_depth=2,
+            n=10,
+            scoring="frequency",
+            beam_width=20,
+        )
+
+        assert (
+            _batch_rows_for(
+                batch,
+                basket_id,
+            )
+            == scalar.to_pylist()
+        )
+
+
+def test_graph_batch_matches_scalar_probability(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+        alpha=0.1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk"],
+        ["bread"],
+        ["eggs"],
+    ]
+
+    batch = gr.recommend_batch(
+        baskets,
+        max_depth=2,
+        n=10,
+        scoring="probability",
+        beam_width=20,
+    )
+
+    for basket_id, seeds in enumerate(baskets):
+        scalar = gr.recommend(
+            seeds,
+            max_depth=2,
+            n=10,
+            scoring="probability",
+            beam_width=20,
+        )
+
+        actual = _batch_rows_for(
+            batch,
+            basket_id,
+        )
+
+        expected = scalar.to_pylist()
+
+        assert len(actual) == len(expected)
+
+        for batch_row, scalar_row in zip(
+            actual,
+            expected,
+        ):
+            assert (
+                batch_row["recommended_item"]
+                == scalar_row["recommended_item"]
+            )
+
+            assert (
+                batch_row["min_hops"]
+                == scalar_row["min_hops"]
+            )
+
+            assert batch_row[
+                "total_strength"
+            ] == pytest.approx(
+                scalar_row[
+                    "total_strength"
+                ],
+                rel=1e-12,
+                abs=1e-15,
+            )
+
+
+def test_graph_batch_beam_is_per_basket(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk", "bread"],
+        ["bread", "butter"],
+        ["eggs"],
+    ]
+
+    beam_width = 2
+
+    batch = gr.recommend_batch(
+        baskets,
+        max_depth=2,
+        n=10,
+        scoring="frequency",
+        beam_width=beam_width,
+    )
+
+    for basket_id, seeds in enumerate(baskets):
+        scalar = gr.recommend(
+            seeds,
+            max_depth=2,
+            n=10,
+            scoring="frequency",
+            beam_width=beam_width,
+        )
+
+        assert (
+            _batch_rows_for(
+                batch,
+                basket_id,
+            )
+            == scalar.to_pylist()
+        )
+
+
+def test_graph_batch_without_beam_matches_scalar(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk"],
+        ["bread"],
+    ]
+
+    batch = gr.recommend_batch(
+        baskets,
+        max_depth=2,
+        n=20,
+        scoring="frequency",
+        beam_width=None,
+    )
+
+    for basket_id, seeds in enumerate(baskets):
+        scalar = gr.recommend(
+            seeds,
+            max_depth=2,
+            n=20,
+            scoring="frequency",
+            beam_width=None,
+        )
+
+        assert (
+            _batch_rows_for(
+                batch,
+                basket_id,
+            )
+            == scalar.to_pylist()
+        )
+
+
+def test_graph_batch_return_paths_matches_scalar(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk"],
+        ["bread"],
+    ]
+
+    batch = gr.recommend_batch(
+        baskets,
+        max_depth=2,
+        n=10,
+        scoring="probability",
+        beam_width=20,
+        return_paths=True,
+    )
+
+    for basket_id, seeds in enumerate(baskets):
+        scalar = gr.recommend(
+            seeds,
+            max_depth=2,
+            n=10,
+            scoring="probability",
+            beam_width=20,
+            return_paths=True,
+        )
+
+        actual = _batch_rows_for(
+            batch,
+            basket_id,
+        )
+
+        expected = scalar.to_pylist()
+
+        assert len(actual) == len(expected)
+
+        for batch_row, scalar_row in zip(
+            actual,
+            expected,
+        ):
+            assert (
+                batch_row["recommended_item"]
+                == scalar_row["recommended_item"]
+            )
+
+            assert (
+                batch_row["min_hops"]
+                == scalar_row["min_hops"]
+            )
+
+            assert batch_row[
+                "total_strength"
+            ] == pytest.approx(
+                scalar_row[
+                    "total_strength"
+                ],
+                rel=1e-12,
+                abs=1e-15,
+            )
+
+            assert (
+                batch_row["reason"]
+                == scalar_row["reason"]
+            )
+
+
+def test_graph_batch_empty_input(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+
+    result = gr.recommend_batch(
+        []
+    )
+
+    assert result.num_rows == 0
+
+    assert result.column_names == [
+        "basket_id",
+        "recommended_item",
+        "total_strength",
+        "min_hops",
+    ]
+
+
+def test_graph_batch_empty_basket_preserves_other_ids(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk"],
+        [],
+        ["bread"],
+    ]
+
+    batch = gr.recommend_batch(
+        baskets,
+        n=5,
+    )
+
+    basket_ids = set(
+        batch.column(
+            "basket_id"
+        ).to_pylist()
+    )
+
+    assert 0 in basket_ids
+    assert 1 not in basket_ids
+    assert 2 in basket_ids
+
+
+def test_graph_batch_excludes_only_own_seeds(
+    loaded_conn,
+):
+    gr = GraphRecommender(
+        loaded_conn,
+        min_cooccurrence=1,
+    )
+    gr.build()
+
+    baskets = [
+        ["milk"],
+        ["bread"],
+    ]
+
+    batch = gr.recommend_batch(
+        baskets,
+        max_depth=2,
+        n=20,
+        exclude_seed=True,
+        beam_width=None,
+    )
+
+    first = _batch_rows_for(
+        batch,
+        0,
+    )
+
+    second = _batch_rows_for(
+        batch,
+        1,
+    )
+
+    assert "milk" not in {
+        row["recommended_item"]
+        for row in first
+    }
+
+    assert "bread" not in {
+        row["recommended_item"]
+        for row in second
+    }

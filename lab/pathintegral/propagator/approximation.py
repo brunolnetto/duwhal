@@ -4,10 +4,12 @@ Core module for proving that classical CF is a degenerate limit
 of the path-integral propagator at T → ∞ and r → |V|.
 """
 from __future__ import annotations
+
+from typing import Dict, List
+
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import svds
-from typing import Dict, List, Optional
 
 
 def compute_rank_r_propagator(

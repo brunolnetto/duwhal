@@ -22,6 +22,7 @@ def large_df():
 class TestPerformanceRegression:
     """Ensure core operations stay within budget on modest hardware."""
 
+    @pytest.mark.slow
     def test_ingestion_10k_rows(self, large_df):
         with Duwhal() as db:
             start = time.perf_counter()
@@ -29,6 +30,7 @@ class TestPerformanceRegression:
             elapsed_ms = (time.perf_counter() - start) * 1000
             assert elapsed_ms < 5_000, f"ingestion took {elapsed_ms:.1f} ms"
 
+    @pytest.mark.slow
     def test_fit_cf_10k_rows(self, large_df):
         with Duwhal() as db:
             db.load_interactions(large_df, set_col="order_id", node_col="item_id")
@@ -37,6 +39,7 @@ class TestPerformanceRegression:
             elapsed_ms = (time.perf_counter() - start) * 1000
             assert elapsed_ms < 10_000, f"fit_cf took {elapsed_ms:.1f} ms"
 
+    @pytest.mark.slow
     def test_fit_graph_10k_rows(self, large_df):
         with Duwhal() as db:
             db.load_interactions(large_df, set_col="order_id", node_col="item_id")
@@ -45,6 +48,7 @@ class TestPerformanceRegression:
             elapsed_ms = (time.perf_counter() - start) * 1000
             assert elapsed_ms < 10_000, f"fit_graph took {elapsed_ms:.1f} ms"
 
+    @pytest.mark.slow
     def test_recommend_graph_10k_rows(self, large_df):
         with Duwhal() as db:
             db.load_interactions(large_df, set_col="order_id", node_col="item_id")
@@ -55,6 +59,7 @@ class TestPerformanceRegression:
             assert elapsed_ms < 1_000, f"recommend_graph took {elapsed_ms:.1f} ms"
             assert recs.num_rows <= 10
 
+    @pytest.mark.slow
     def test_recommend_cf_10k_rows(self, large_df):
         with Duwhal() as db:
             db.load_interactions(large_df, set_col="order_id", node_col="item_id")
@@ -151,6 +156,7 @@ def _synthetic_kuairec_like(seed=42):
 class TestLatencyDistributionBenchmarks:
     """Record p50/p95/p99 latencies for serving paths (best-effort assertions)."""
 
+    @pytest.mark.slow
     def test_itemcf_latency_distribution(self):
         df = _synthetic_large_context_stress(seed=1)
         with Duwhal() as db:
@@ -185,6 +191,7 @@ class TestLatencyDistributionBenchmarks:
             stats = _benchmark(db, recommend_fn, ["i0"], n=10, repeats=10)
             assert stats["p95"] < 1_000, f"Graph depth=2 beam=50 p95={stats['p95']:.1f} ms"
 
+    @pytest.mark.slow
     def test_graph_return_paths_cost(self):
         """Pathless traversal should be substantially cheaper than path tracking."""
         df = _synthetic_kuairec_like(seed=4)
@@ -209,6 +216,7 @@ class TestLatencyDistributionBenchmarks:
 class TestPathologicalGraphBenchmarks:
     """Ensure bounded graph does not explode on high-degree hubs."""
 
+    @pytest.mark.slow
     def test_hub_graph_recommendation_bounded(self):
         rng = np.random.default_rng(42)
         n_hubs = 5
@@ -236,6 +244,7 @@ class TestPathologicalGraphBenchmarks:
 class TestKuaiRecWorkloadBenchmark:
     """Approximate the KuaiRec small-user workload (train ~60k interactions, sessions <= 15)."""
 
+    @pytest.mark.slow
     def test_kuairec_itemcf_and_graph_latency(self):
         df = _synthetic_kuairec_like(seed=7)
         rng = np.random.default_rng(7)

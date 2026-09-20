@@ -521,17 +521,723 @@ class GraphRecommender:
             ),
         )
 
+
+    @staticmethod
+    def _empty_batch_result(
+        *,
+        return_paths: bool,
+    ) -> pa.Table:
+        """
+        Return an empty Graph batch result with a stable schema.
+        """
+        schema = [
+            (
+                "basket_id",
+                pa.int64(),
+            ),
+            (
+                "recommended_item",
+                pa.string(),
+            ),
+            (
+                "total_strength",
+                pa.float64(),
+            ),
+            (
+                "min_hops",
+                pa.int32(),
+            ),
+        ]
+
+        if return_paths:
+            schema.append(
+                (
+                    "reason",
+                    pa.string(),
+                )
+            )
+
+        return pa.Table.from_batches(
+            [],
+            schema=pa.schema(
+                schema
+            ),
+        )
+
+    def _register_batch_seeds(
+        self,
+        seeds_list: list[Any],
+    ) -> int:
+        """
+        Register all seed baskets in one Arrow relation.
+
+        ``basket_id`` preserves the input order. Seed normalization follows
+        the scalar serving path exactly: values are converted to unique,
+        non-empty VARCHAR identifiers per basket.
+        """
+        rows: list[dict[str, Any]] = []
+
+        for basket_id, seed_items in enumerate(
+            seeds_list
+        ):
+            seeds = normalize_seeds(
+                seed_items
+            )
+
+            for node_id in seeds:
+                rows.append(
+                    {
+                        "basket_id":
+                            basket_id,
+                        "node_id":
+                            node_id,
+                    }
+                )
+
+        table = pa.Table.from_pylist(
+            rows,
+            schema=pa.schema(
+                [
+                    (
+                        "basket_id",
+                        pa.int64(),
+                    ),
+                    (
+                        "node_id",
+                        pa.string(),
+                    ),
+                ]
+            ),
+        )
+
+        self.conn.register(
+            "_graph_batch_seeds",
+            table,
+        )
+
+        return len(rows)
+
+    def _initialize_batch_frontier(
+        self,
+        *,
+        return_paths: bool,
+    ) -> int:
+        """
+        Initialize one independent frontier per basket.
+
+        Seed strength is normalized over valid seeds within each basket.
+        The counts are calculated with ``GROUP BY`` rather than a serving-path
+        window function.
+        """
+        self.conn.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE
+                _graph_batch_valid_seeds AS
+
+            SELECT DISTINCT
+                s.basket_id,
+                s.node_id
+
+            FROM _graph_batch_seeds s
+
+            JOIN _item_totals i
+              ON i.node_id = s.node_id
+            """
+        )
+
+        self.conn.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE
+                _graph_batch_seed_counts AS
+
+            SELECT
+                basket_id,
+                COUNT(*) AS seed_count
+
+            FROM _graph_batch_valid_seeds
+
+            GROUP BY basket_id
+            """
+        )
+
+        if return_paths:
+            self.conn.execute(
+                """
+                CREATE OR REPLACE TEMP TABLE
+                    _graph_batch_frontier AS
+
+                SELECT
+                    s.basket_id,
+                    s.node_id AS item,
+
+                    (
+                        1.0::DOUBLE
+                        / c.seed_count
+                    ) AS strength,
+
+                    0::INTEGER AS depth,
+                    [s.node_id] AS path
+
+                FROM _graph_batch_valid_seeds s
+
+                JOIN _graph_batch_seed_counts c
+                  USING (basket_id)
+                """
+            )
+
+        else:
+            self.conn.execute(
+                """
+                CREATE OR REPLACE TEMP TABLE
+                    _graph_batch_frontier AS
+
+                SELECT
+                    s.basket_id,
+                    s.node_id AS item,
+
+                    (
+                        1.0::DOUBLE
+                        / c.seed_count
+                    ) AS strength,
+
+                    0::INTEGER AS depth
+
+                FROM _graph_batch_valid_seeds s
+
+                JOIN _graph_batch_seed_counts c
+                  USING (basket_id)
+                """
+            )
+
+        return self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM _graph_batch_frontier
+            """
+        ).fetchone()[0]
+
+    def _initialize_batch_walks(
+        self,
+    ) -> None:
+        self.conn.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE
+                _graph_batch_walks AS
+
+            SELECT *
+            FROM _graph_batch_frontier
+            """
+        )
+
+    def _expand_batch_frontier(
+        self,
+        *,
+        score_col: str,
+        min_weight: int,
+        beam_width: Optional[int],
+        return_paths: bool,
+    ) -> int:
+        """
+        Expand exactly one hop for every basket.
+
+        Beam pruning remains independent for each basket. Instead of a
+        ``ROW_NUMBER() OVER (PARTITION BY basket_id ...)`` window, candidates
+        are packed into a deterministically ordered LIST per basket, sliced to
+        ``beam_width``, then unnested.
+        """
+        if return_paths:
+            candidate_sql = f"""
+                SELECT
+                    f.basket_id,
+                    e.target AS item,
+
+                    (
+                        f.strength
+                        * e.{score_col}
+                    ) AS strength,
+
+                    (
+                        f.depth + 1
+                    )::INTEGER AS depth,
+
+                    list_append(
+                        f.path,
+                        e.target
+                    ) AS path,
+
+                    f.item AS parent
+
+                FROM _graph_batch_frontier f
+
+                JOIN _item_edges_scored e
+                  ON f.item = e.source
+
+                WHERE
+                    e.weight >= {int(min_weight)}
+            """
+
+        else:
+            candidate_sql = f"""
+                SELECT
+                    f.basket_id,
+                    e.target AS item,
+
+                    (
+                        f.strength
+                        * e.{score_col}
+                    ) AS strength,
+
+                    (
+                        f.depth + 1
+                    )::INTEGER AS depth,
+
+                    f.item AS parent
+
+                FROM _graph_batch_frontier f
+
+                JOIN _item_edges_scored e
+                  ON f.item = e.source
+
+                WHERE
+                    e.weight >= {int(min_weight)}
+            """
+
+        if beam_width is None:
+            if return_paths:
+                self.conn.execute(
+                    f"""
+                    CREATE OR REPLACE TEMP TABLE
+                        _graph_batch_next AS
+
+                    SELECT
+                        basket_id,
+                        item,
+                        strength,
+                        depth,
+                        path
+
+                    FROM (
+                        {candidate_sql}
+                    ) candidates
+
+                    ORDER BY
+                        basket_id,
+                        strength DESC,
+                        item,
+                        parent
+                    """
+                )
+
+            else:
+                self.conn.execute(
+                    f"""
+                    CREATE OR REPLACE TEMP TABLE
+                        _graph_batch_next AS
+
+                    SELECT
+                        basket_id,
+                        item,
+                        strength,
+                        depth
+
+                    FROM (
+                        {candidate_sql}
+                    ) candidates
+
+                    ORDER BY
+                        basket_id,
+                        strength DESC,
+                        item,
+                        parent
+                    """
+                )
+
+        elif return_paths:
+            self.conn.execute(
+                f"""
+                CREATE OR REPLACE TEMP TABLE
+                    _graph_batch_next AS
+
+                WITH candidates AS (
+
+                    {candidate_sql}
+
+                ),
+
+                packed AS (
+
+                    SELECT
+                        basket_id,
+
+                        list_slice(
+
+                            list(
+
+                                struct_pack(
+                                    item := item,
+                                    strength := strength,
+                                    depth := depth,
+                                    path := path,
+                                    parent := parent
+                                )
+
+                                ORDER BY
+                                    strength DESC,
+                                    item,
+                                    parent
+
+                            ),
+
+                            1,
+                            {int(beam_width)}
+
+                        ) AS entries
+
+                    FROM candidates
+
+                    GROUP BY basket_id
+                ),
+
+                expanded AS (
+
+                    SELECT
+                        basket_id,
+                        unnest(entries) AS entry
+
+                    FROM packed
+                )
+
+                SELECT
+                    basket_id,
+                    entry.item AS item,
+                    entry.strength AS strength,
+                    entry.depth::INTEGER AS depth,
+                    entry.path AS path
+
+                FROM expanded
+                """
+            )
+
+        else:
+            self.conn.execute(
+                f"""
+                CREATE OR REPLACE TEMP TABLE
+                    _graph_batch_next AS
+
+                WITH candidates AS (
+
+                    {candidate_sql}
+
+                ),
+
+                packed AS (
+
+                    SELECT
+                        basket_id,
+
+                        list_slice(
+
+                            list(
+
+                                struct_pack(
+                                    item := item,
+                                    strength := strength,
+                                    depth := depth,
+                                    parent := parent
+                                )
+
+                                ORDER BY
+                                    strength DESC,
+                                    item,
+                                    parent
+
+                            ),
+
+                            1,
+                            {int(beam_width)}
+
+                        ) AS entries
+
+                    FROM candidates
+
+                    GROUP BY basket_id
+                ),
+
+                expanded AS (
+
+                    SELECT
+                        basket_id,
+                        unnest(entries) AS entry
+
+                    FROM packed
+                )
+
+                SELECT
+                    basket_id,
+                    entry.item AS item,
+                    entry.strength AS strength,
+                    entry.depth::INTEGER AS depth
+
+                FROM expanded
+                """
+            )
+
+        return self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM _graph_batch_next
+            """
+        ).fetchone()[0]
+
+    def _advance_batch_frontier(
+        self,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO _graph_batch_walks
+
+            SELECT *
+            FROM _graph_batch_next
+            """
+        )
+
+        self.conn.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE
+                _graph_batch_frontier AS
+
+            SELECT *
+            FROM _graph_batch_next
+            """
+        )
+
+    def _aggregate_batch_walks(
+        self,
+        *,
+        scoring: str,
+        n: int,
+        exclude_seed: bool,
+        return_paths: bool,
+    ) -> pa.Table:
+        """
+        Aggregate walks and return top-N recommendations independently
+        for every basket.
+        """
+        aggregate = (
+            "MAX"
+            if scoring == "path"
+            else "SUM"
+        )
+
+        exclude_sql = ""
+
+        if exclude_seed:
+            exclude_sql = """
+                AND NOT EXISTS (
+
+                    SELECT 1
+
+                    FROM _graph_batch_valid_seeds s
+
+                    WHERE
+                        s.basket_id = w.basket_id
+                        AND s.node_id = w.item
+                )
+            """
+
+        if return_paths:
+            scored_sql = f"""
+                SELECT
+                    w.basket_id,
+                    w.item,
+
+                    {aggregate}(
+                        w.strength
+                    ) AS total_strength,
+
+                    MIN(
+                        w.depth
+                    )::INTEGER AS min_hops,
+
+                    arg_max(
+                        array_to_string(
+                            w.path,
+                            ' -> '
+                        ),
+                        w.strength
+                    ) AS reason
+
+                FROM _graph_batch_walks w
+
+                WHERE
+                    w.depth > 0
+
+                    {exclude_sql}
+
+                GROUP BY
+                    w.basket_id,
+                    w.item
+            """
+
+            packed_entry = """
+                struct_pack(
+                    recommended_item := item,
+                    total_strength := total_strength,
+                    min_hops := min_hops,
+                    reason := reason
+                )
+            """
+
+            final_columns = """
+                entry.recommended_item
+                    AS recommended_item,
+
+                entry.total_strength
+                    AS total_strength,
+
+                entry.min_hops::INTEGER
+                    AS min_hops,
+
+                entry.reason
+                    AS reason
+            """
+
+        else:
+            scored_sql = f"""
+                SELECT
+                    w.basket_id,
+                    w.item,
+
+                    {aggregate}(
+                        w.strength
+                    ) AS total_strength,
+
+                    MIN(
+                        w.depth
+                    )::INTEGER AS min_hops
+
+                FROM _graph_batch_walks w
+
+                WHERE
+                    w.depth > 0
+
+                    {exclude_sql}
+
+                GROUP BY
+                    w.basket_id,
+                    w.item
+            """
+
+            packed_entry = """
+                struct_pack(
+                    recommended_item := item,
+                    total_strength := total_strength,
+                    min_hops := min_hops
+                )
+            """
+
+            final_columns = """
+                entry.recommended_item
+                    AS recommended_item,
+
+                entry.total_strength
+                    AS total_strength,
+
+                entry.min_hops::INTEGER
+                    AS min_hops
+            """
+
+        query = f"""
+            WITH scored AS (
+
+                {scored_sql}
+
+            ),
+
+            packed AS (
+
+                SELECT
+                    basket_id,
+
+                    list_slice(
+
+                        list(
+
+                            {packed_entry}
+
+                            ORDER BY
+                                total_strength DESC,
+                                item
+
+                        ),
+
+                        1,
+                        {int(n)}
+
+                    ) AS entries
+
+                FROM scored
+
+                GROUP BY basket_id
+            ),
+
+            expanded AS (
+
+                SELECT
+                    basket_id,
+                    unnest(entries) AS entry
+
+                FROM packed
+            )
+
+            SELECT
+                basket_id,
+
+                {final_columns}
+
+            FROM expanded
+
+            ORDER BY
+                basket_id,
+                total_strength DESC,
+                recommended_item
+        """
+
+        return self.conn.query(
+            query
+        )
+
     def _initialize_frontier(
         self,
         *,
         return_paths: bool,
     ) -> int:
         """
-        Initialize one root per valid seed.
+        Initialize one root per valid seed without window functions.
 
-        Strength is normalized over the valid seed set only, matching the
-        previous recursive traversal semantics.
+        Seed strength is normalized over valid seeds only. The valid seed count
+        is calculated as a scalar first, avoiding COUNT(*) OVER () in the
+        serving path.
         """
+
+        valid_seed_count = self.conn.execute(
+            """
+            SELECT COUNT(*)
+
+            FROM _seeds s
+
+            JOIN _item_totals i
+            ON i.node_id = s.node_id
+            """
+        ).fetchone()[0]
+
+        if valid_seed_count == 0:
+            return 0
+
+        initial_strength = (
+            1.0
+            / valid_seed_count
+        )
 
         if return_paths:
             self.conn.execute(
@@ -540,25 +1246,17 @@ class GraphRecommender:
                     _graph_frontier AS
 
                 SELECT
-                    node_id AS item,
-
-                    (
-                        1.0::DOUBLE
-                        / COUNT(*) OVER ()
-                    ) AS strength,
-
+                    s.node_id AS item,
+                    ?::DOUBLE AS strength,
                     0::INTEGER AS depth,
-
-                    [node_id] AS path
+                    [s.node_id] AS path
 
                 FROM _seeds s
 
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM _item_totals i
-                    WHERE i.node_id = s.node_id
-                )
-                """
+                JOIN _item_totals i
+                ON i.node_id = s.node_id
+                """,
+                [initial_strength],
             )
 
         else:
@@ -568,31 +1266,19 @@ class GraphRecommender:
                     _graph_frontier AS
 
                 SELECT
-                    node_id AS item,
-
-                    (
-                        1.0::DOUBLE
-                        / COUNT(*) OVER ()
-                    ) AS strength,
-
+                    s.node_id AS item,
+                    ?::DOUBLE AS strength,
                     0::INTEGER AS depth
 
                 FROM _seeds s
 
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM _item_totals i
-                    WHERE i.node_id = s.node_id
-                )
-                """
+                JOIN _item_totals i
+                ON i.node_id = s.node_id
+                """,
+                [initial_strength],
             )
 
-        return self.conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM _graph_frontier
-            """
-        ).fetchone()[0]
+        return valid_seed_count
 
     def _initialize_walks(
         self,
@@ -919,6 +1605,98 @@ class GraphRecommender:
             self._advance_frontier()
 
         return self._aggregate_walks(
+            scoring=scoring,
+            n=n,
+            exclude_seed=exclude_seed,
+            return_paths=return_paths,
+        )
+
+
+    def recommend_batch(
+        self,
+        seeds_list: list[Any],
+        max_depth: int = 2,
+        min_weight: int = 1,
+        n: int = 10,
+        exclude_seed: bool = True,
+        scoring: str = "frequency",
+        return_paths: bool = False,
+        beam_width: Optional[int] = 200,
+    ) -> pa.Table:
+        """
+        Vectorized graph recommendation for multiple seed baskets.
+
+        All baskets traverse the same scored graph in one iterative serving
+        pipeline. ``basket_id`` in the returned table maps each recommendation
+        back to the input basket position.
+        """
+        if not self._built:
+            self.build()
+
+        self._validate_params()
+
+        self._validate_recommend_params(
+            n=n,
+            max_depth=max_depth,
+            min_weight=min_weight,
+            scoring=scoring,
+            beam_width=beam_width,
+        )
+
+        if not seeds_list:
+            return self._empty_batch_result(
+                return_paths=return_paths
+            )
+
+        seed_count = (
+            self._register_batch_seeds(
+                seeds_list
+            )
+        )
+
+        if seed_count == 0:
+            return self._empty_batch_result(
+                return_paths=return_paths
+            )
+
+        valid_seed_count = (
+            self._initialize_batch_frontier(
+                return_paths=return_paths
+            )
+        )
+
+        if valid_seed_count == 0:
+            return self._empty_batch_result(
+                return_paths=return_paths
+            )
+
+        self._initialize_batch_walks()
+
+        score_col = (
+            self._score_column(
+                scoring
+            )
+        )
+
+        for _depth in range(
+            1,
+            max_depth + 1,
+        ):
+            next_count = (
+                self._expand_batch_frontier(
+                    score_col=score_col,
+                    min_weight=min_weight,
+                    beam_width=beam_width,
+                    return_paths=return_paths,
+                )
+            )
+
+            if next_count == 0:
+                break
+
+            self._advance_batch_frontier()
+
+        return self._aggregate_batch_walks(
             scoring=scoring,
             n=n,
             exclude_seed=exclude_seed,

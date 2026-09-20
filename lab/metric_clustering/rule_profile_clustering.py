@@ -23,14 +23,14 @@ Run:
 """
 
 from __future__ import annotations
+
 import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
 from duwhal import Duwhal
 from duwhal.datasets import generate_retail_transactions
-
 
 # ---------------------------------------------------------------------------
 # Constants

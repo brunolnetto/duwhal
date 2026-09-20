@@ -5,17 +5,17 @@ Demonstrates how `duwhal` can be used to analyze large corpora of text by repres
 Sentences as 'Sets' and Words as 'Nodes'.
 """
 
-import pandas as pd
 from duwhal import Duwhal
 from duwhal.datasets import generate_nlp_corpus
 
+
 def nlp_semantic_graph():
     df = generate_nlp_corpus()
-    
+
     print("--- NLP Semantic Token Graph ---")
     with Duwhal() as db:
         db.load_interactions(df, set_col="sentence_id", node_col="token", sort_col="pos")
-        
+
         # 1. Finding Synonyms / Related Concepts (Graph Proximity)
         # Using Graph Traversal to find tokens that appear in similar semantic contexts.
         print("\n[NLP 1] Semantic Proximity for 'Interest Rates':")
