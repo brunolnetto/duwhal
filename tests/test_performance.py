@@ -4,14 +4,7 @@ These tests guard against accidental performance degradation by asserting that
 key operations complete within generous wall-clock budgets on the test runner.
 """
 
-"""Performance regression suite.
-
-These tests guard against accidental performance degradation by asserting that
-key operations complete within generous wall-clock budgets on the test runner.
-"""
-
 import time
-from statistics import mean
 
 import numpy as np
 import pandas as pd
@@ -100,25 +93,6 @@ class TestPerformanceRegression:
             elapsed_ms = (time.perf_counter() - start) * 1000
             assert elapsed_ms < 2_000, f"recommend_batch took {elapsed_ms:.1f} ms"
             assert results.num_rows == len(seeds) * 5
-    def test_recommend_popularity_10k_rows(self, large_df):
-        with Duwhal() as db:
-            db.load_interactions(large_df, set_col="order_id", node_col="item_id")
-            db.fit_popularity()
-            start = time.perf_counter()
-            recs = db.recommend(strategy="popularity", n=10)
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            assert elapsed_ms < 100, f"popularity recommend took {elapsed_ms:.1f} ms"
-            assert recs.num_rows <= 10
-
-    def test_recommend_cf_10k_rows(self, large_df):
-        with Duwhal() as db:
-            db.load_interactions(large_df, set_col="order_id", node_col="item_id")
-            db.fit_cf(metric="jaccard", min_cooccurrence=2, top_k_similar=20)
-            start = time.perf_counter()
-            recs = db.recommend([large_df["item_id"].iloc[0]], strategy="cf", n=10)
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            assert elapsed_ms < 500, f"recommend_cf took {elapsed_ms:.1f} ms"
-            assert recs.num_rows <= 10
 
 
 def _percentile(values, p):

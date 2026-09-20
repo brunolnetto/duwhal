@@ -15,9 +15,11 @@ class GraphRecommender:
         table_name: str = "interactions",
         min_cooccurrence: int = 1,
         alpha: float = 0.0,  # Bayesian Prior
+        top_k_edges: Optional[int] = None,
     ):
         self.conn, self.table_name = conn, table_name
         self.min_cooccurrence, self.alpha = min_cooccurrence, alpha
+        self.top_k_edges = top_k_edges
         self._built = False
         self._prepared_scoring: str | None = None
         self._prepare_edges_calls = 0
@@ -30,6 +32,8 @@ class GraphRecommender:
     def _validate_params(self):
         if self.min_cooccurrence < 1:
             raise ValueError("min_cooccurrence must be >= 1")
+        if self.top_k_edges is not None and self.top_k_edges < 1:
+            raise ValueError("top_k_edges must be >= 1 or None")
 
     def build(self, stats=None) -> GraphRecommender:
         import time
@@ -52,18 +56,29 @@ class GraphRecommender:
             HAVING cooc >= {self.min_cooccurrence}
         """)
 
-        self.conn.execute("""
+        self.conn.execute(f"""
             CREATE OR REPLACE TABLE _item_adjacency AS
             SELECT
                 source,
                 list(target ORDER BY cooc DESC) AS neighbors,
                 list(cooc ORDER BY cooc DESC) AS weights
             FROM (
-                SELECT item_a AS source, item_b AS target, cooc FROM _item_unordered_pairs
+                SELECT
+                    item_a AS source,
+                    item_b AS target,
+                    cooc,
+                    row_number() OVER (PARTITION BY item_a ORDER BY cooc DESC) AS rn_a
+                FROM _item_unordered_pairs
                 UNION ALL
-                SELECT item_b AS source, item_a AS target, cooc FROM _item_unordered_pairs
-            )
-            GROUP BY 1
+                SELECT
+                    item_b AS source,
+                    item_a AS target,
+                    cooc,
+                    row_number() OVER (PARTITION BY item_b ORDER BY cooc DESC) AS rn_b
+                FROM _item_unordered_pairs
+            ) directed
+            {f"WHERE rn_a <= {self.top_k_edges}" if self.top_k_edges else ""}
+            GROUP BY source
         """)
 
         prior_size = self._prior_catalog_size()
