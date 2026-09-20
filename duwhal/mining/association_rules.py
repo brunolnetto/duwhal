@@ -48,7 +48,7 @@ class AssociationRules:
         full = set(row["consequents_full"].split("|"))
         cons = "|".join(sorted(list(full - ants)))
         if not cons: return None
-        supp_b = self.conn.execute(f"SELECT support FROM _fi WHERE itemset = '{cons}'").fetchone()
+        supp_b = self.conn.execute("SELECT support FROM _fi WHERE itemset = ?", [cons]).fetchone()
         if not supp_b: return None
         row["consequents"] = cons
         return self._calculate_metrics(row, supp_b[0])
