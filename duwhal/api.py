@@ -345,7 +345,7 @@ class Duwhal:
             return pa.Table.from_batches([], schema=pa.schema([("item_id", pa.string()), ("score", pa.float64()), ("rule", pa.string())]))
         return pa.Table.from_pylist(self._filter_matches(matches, n))
 
-    def _dispatch_recommendation(self, strategy: str, seed_items: List[str], n: int, kwargs: dict) -> pa.Table:
+    def _dispatch_recommendation(self, strategy: str, seed_items: Any, n: int, kwargs: dict) -> pa.Table:
         if strategy == "graph": return self.recommend_graph(seed_items, n=n, **kwargs)
         if strategy == "cf": return self.recommend_cf(seed_items, n=n, **kwargs)
         if strategy == "rules": return self.recommend_by_rules(seed_items, n=n, **kwargs)
@@ -358,11 +358,38 @@ class Duwhal:
         if self._cf_model: return "cf"
         return "graph"
 
-    def recommend(self, seed_items: Optional[List[str]] = None, strategy: str = "auto", n: int = 10, **kwargs) -> pa.Table:
+    def recommend(self, seed_items: Optional[Any] = None, strategy: str = "auto", n: int = 10, **kwargs) -> pa.Table:
         res = self._dispatch_recommendation(self._resolve_strategy(strategy), seed_items or [], n, kwargs)
         if "item_id" in res.column_names:
             res = res.rename_columns(["recommended_item" if c == "item_id" else c for c in res.column_names])
         return res
+
+    def recommend_batch(
+        self,
+        seeds_list: list[Any],
+        strategy: str = "auto",
+        n: int = 10,
+        **kwargs,
+    ) -> list[pa.Table]:
+        """Generate recommendations for multiple seed baskets.
+
+        Parameters
+        ----------
+        seeds_list:
+            List of seed baskets.  Each basket may be a list of items or a
+            dict mapping item to weight.
+        strategy, n, **kwargs:
+            Forwarded to :meth:`recommend`.
+
+        Returns
+        -------
+        list[pa.Table]
+            One recommendation table per basket, in the same order.
+        """
+        return [
+            self.recommend(seed_items=seeds, strategy=strategy, n=n, **kwargs)
+            for seeds in seeds_list
+        ]
 
     def find_sink_sccs(self, min_cooccurrence: int = 5, min_confidence: float = 0.0) -> pa.Table:
         """Identifies Sink Strongly Connected Components (Equilibrium Communities)."""
