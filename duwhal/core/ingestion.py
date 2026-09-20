@@ -61,13 +61,17 @@ def _prepare_file_source(conn, source, set_col, node_col, sort_col):
 
 def _create_new_table(conn, table_name, has_sort):
     e = ", sort_column" if has_sort else ""
-    conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT set_id::VARCHAR AS set_id, node_id::VARCHAR AS node_id {e} FROM _tmp_interactions")
+    conn.execute(f"""
+        CREATE OR REPLACE TABLE {table_name} AS
+        SELECT DISTINCT set_id::VARCHAR AS set_id, node_id::VARCHAR AS node_id {e}
+        FROM _tmp_interactions
+    """)
 
 def _append_to_table(conn, table_name, has_sort):
     if has_sort and not _check_column_exists(conn, table_name, "sort_column"):
         res = conn.execute("SELECT typeof(sort_column) FROM _tmp_interactions LIMIT 1").fetchone()
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN sort_column {res[0] if res else 'VARCHAR'}")
-    conn.execute(f"INSERT INTO {table_name} BY NAME SELECT * FROM _tmp_interactions")
+    conn.execute(f"INSERT INTO {table_name} BY NAME SELECT DISTINCT * FROM _tmp_interactions")
 
 def _handle_table_upsert(conn, table_name, append, has_sort):
     if not append or not conn.table_exists(table_name):
