@@ -146,7 +146,11 @@ class TestLatencyDistributionBenchmarks:
         with Duwhal() as db:
             db.load_interactions(df, set_col="user_id", node_col="item_id")
             db.fit_graph(min_cooccurrence=2, top_k_edges=50)
-            stats = _benchmark(db, db.recommend_graph, ["i0"], n=10, repeats=10)
+
+            def recommend_fn(seeds, n):
+                return db.recommend_graph(seeds, n=n, max_depth=1)
+
+            stats = _benchmark(db, recommend_fn, ["i0"], n=10, repeats=10)
             assert stats["p95"] < 1_000, f"Graph depth=1 p95={stats['p95']:.1f} ms"
 
     def test_graph_bounded_depth2_beam50_latency_distribution(self):

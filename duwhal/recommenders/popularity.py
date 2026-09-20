@@ -15,6 +15,11 @@ class PopularityRecommender:
     probability distribution. This is **context popularity** (also called
     context penetration): how many distinct contexts contain an item, not how
     many raw events it received.
+
+    When ``decay_half_life`` is set the score is computed as the sum of
+    per-event decay weights. Because repeated events inside the same context
+    each contribute a decayed weight, the decayed score is **event-based**
+    rather than context-based.
     """
 
     def __init__(

@@ -153,7 +153,6 @@ class GraphRecommender:
         n: int,
         return_paths: bool,
         beam_width: Optional[int],
-        max_expansions: Optional[int],
     ) -> str:
         score_col = self._score_column(scoring)
         if return_paths:
@@ -172,7 +171,7 @@ class GraphRecommender:
         exc_sql = "AND item NOT IN (SELECT node_id FROM _seeds)" if exclude else ""
         beam_sql = ""
         if beam_width:
-            beam_sql = f"QUALIFY row_number() OVER (PARTITION BY depth ORDER BY strength DESC) <= {beam_width}"
+            beam_sql = f"QUALIFY row_number() OVER (PARTITION BY depth ORDER BY strength DESC, e.target) <= {beam_width}"
         return f"""
         WITH RECURSIVE traversal({frontier_cols}) AS (
             {seed_select}
@@ -205,7 +204,6 @@ class GraphRecommender:
         scoring: str = "frequency",
         return_paths: bool = False,
         beam_width: Optional[int] = 200,
-        max_expansions: Optional[int] = None,
     ) -> pa.Table:
         if not self._built: self.build()
         self._validate_params()
@@ -219,8 +217,6 @@ class GraphRecommender:
             raise ValueError("min_weight must be >= 0")
         if beam_width is not None and beam_width < 1:
             raise ValueError("beam_width must be >= 1 or None")
-        if max_expansions is not None and max_expansions < 1:
-            raise ValueError("max_expansions must be >= 1 or None")
         seeds = normalize_seeds(seed_items)
         if not seeds:
             schema = [
@@ -242,7 +238,6 @@ class GraphRecommender:
             n=n,
             return_paths=return_paths,
             beam_width=beam_width,
-            max_expansions=max_expansions,
         )
         return self.conn.query(q)
 
