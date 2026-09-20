@@ -49,17 +49,24 @@ class PopularityRecommender:
         if self.decay_half_life is not None and self.decay_half_life <= 0:
             raise ValueError("decay_half_life must be > 0")
 
+    def _resolve_timestamp_col(self) -> str:
+        if self.timestamp_col:
+            return self.timestamp_col
+        try:
+            self.conn.execute(f"SELECT sort_column FROM {self.table_name} LIMIT 0")
+            return "sort_column"
+        except Exception:
+            raise ValueError("timestamp_col or sort_column required when decay_half_life is set.")
+
     def fit(self, stats=None):
         import time
         start = time.perf_counter()
         self._validate_params()
         if self.strategy == "trending" and not self.timestamp_col:
-            # check for sort_column
-            try:
-                self.conn.execute(f"SELECT sort_column FROM {self.table_name} LIMIT 0")
-                self.timestamp_col = "sort_column"
-            except Exception:
-                raise ValueError("timestamp_col required for trending strategy.")
+            self.timestamp_col = self._resolve_timestamp_col()
+
+        if self.decay_half_life:
+            self.timestamp_col = self._resolve_timestamp_col()
 
         if self.strategy == "trending":
             where_clause = f"WHERE {self.timestamp_col} >= bounds.max_ts - INTERVAL {self.window_days} DAY"
@@ -68,7 +75,7 @@ class PopularityRecommender:
 
         ts_col = self.timestamp_col if self.timestamp_col else "NULL"
         half_life_seconds = (self.decay_half_life or 0) * 86400.0
-        if self.decay_half_life and self.timestamp_col:
+        if self.decay_half_life:
             score_expr = f"SUM(POWER(0.5, EXTRACT(EPOCH FROM (bounds.max_ts - {self.timestamp_col})) / {half_life_seconds}))"
         else:
             score_expr = "COUNT(DISTINCT set_id)::DOUBLE"

@@ -112,7 +112,8 @@ def _benchmark(db, fn, seeds, n=10, repeats=20):
     }
 
 
-def _synthetic_kuairec_like(seed=42):
+def _synthetic_large_context_stress(seed=42):
+    """Large-context stress test: many interactions per user-like context."""
     rng = np.random.default_rng(seed)
     n_users = 100
     n_items = 1_000
@@ -130,11 +131,32 @@ def _synthetic_kuairec_like(seed=42):
     return pd.DataFrame(interactions)
 
 
+def _synthetic_kuairec_like(seed=42):
+    """KuaiRec-like workload: ~100 users, ~60k interactions, sessions <= 15 items."""
+    rng = np.random.default_rng(seed)
+    n_users = 100
+    n_items = 2_000
+    target_interactions = 60_000
+    max_session = 15
+    interactions = []
+    for user_id in range(n_users):
+        n = target_interactions // n_users
+        # Power-law item popularity.
+        probs = np.power(np.arange(1, n_items + 1), -1.0)
+        probs /= probs.sum()
+        items = rng.choice(n_items, size=n, replace=True, p=probs)
+        for i, item in enumerate(items):
+            session_seq = i // max_session
+            session_id = f"u{user_id}_s{session_seq}"
+            interactions.append({"session_id": session_id, "item_id": f"i{item}"})
+    return pd.DataFrame(interactions)
+
+
 class TestLatencyDistributionBenchmarks:
     """Record p50/p95/p99 latencies for serving paths (best-effort assertions)."""
 
     def test_itemcf_latency_distribution(self):
-        df = _synthetic_kuairec_like(seed=1)
+        df = _synthetic_large_context_stress(seed=1)
         with Duwhal() as db:
             db.load_interactions(df, set_col="user_id", node_col="item_id")
             db.fit_cf(metric="jaccard", min_cooccurrence=2, top_k_similar=20)
@@ -142,7 +164,7 @@ class TestLatencyDistributionBenchmarks:
             assert stats["p50"] < 500, f"ItemCF p50={stats['p50']:.1f} ms"
 
     def test_graph_bounded_depth1_latency_distribution(self):
-        df = _synthetic_kuairec_like(seed=2)
+        df = _synthetic_large_context_stress(seed=2)
         with Duwhal() as db:
             db.load_interactions(df, set_col="user_id", node_col="item_id")
             db.fit_graph(min_cooccurrence=2, top_k_edges=50)
@@ -154,7 +176,7 @@ class TestLatencyDistributionBenchmarks:
             assert stats["p95"] < 1_000, f"Graph depth=1 p95={stats['p95']:.1f} ms"
 
     def test_graph_bounded_depth2_beam50_latency_distribution(self):
-        df = _synthetic_kuairec_like(seed=3)
+        df = _synthetic_large_context_stress(seed=3)
         with Duwhal() as db:
             db.load_interactions(df, set_col="user_id", node_col="item_id")
             db.fit_graph(min_cooccurrence=2, top_k_edges=50)
@@ -194,22 +216,14 @@ class TestPathologicalGraphBenchmarks:
 
 
 class TestKuaiRecWorkloadBenchmark:
-    """Approximate the KuaiRec small-user workload (train ~60k interactions)."""
+    """Approximate the KuaiRec small-user workload (train ~60k interactions, sessions <= 15)."""
 
     def test_kuairec_itemcf_and_graph_latency(self):
+        df = _synthetic_kuairec_like(seed=7)
         rng = np.random.default_rng(7)
-        n_users = 100
         n_items = 2_000
-        target_interactions = 60_000
-        interactions = []
-        for user_id in range(n_users):
-            n = target_interactions // n_users
-            popular_items = rng.choice(n_items, size=n, replace=True, p=np.linspace(2, 1, n_items) / np.linspace(2, 1, n_items).sum())
-            for item in popular_items:
-                interactions.append({"user_id": f"u{user_id}", "item_id": f"i{item}"})
-        df = pd.DataFrame(interactions)
         with Duwhal() as db:
-            db.load_interactions(df, set_col="user_id", node_col="item_id")
+            db.load_interactions(df, set_col="session_id", node_col="item_id")
             db.fit_cf(metric="jaccard", min_cooccurrence=2, top_k_similar=20)
             seeds = [f"i{rng.integers(0, n_items)}" for _ in range(5)]
             cf_times = []

@@ -155,22 +155,18 @@ class GraphRecommender:
         beam_width: Optional[int],
     ) -> str:
         score_col = self._score_column(scoring)
-        if return_paths:
-            reason_col = ", arg_max(array_to_string(path, ' -> '), strength) AS reason"
-            frontier_cols = "item, strength, depth, path"
-            seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0, [s.node_id]"
-            expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1, list_append(t.path, e.target)"
-            cycle_filter = "AND NOT list_contains(t.path, e.target)"
-        else:
-            reason_col = ""
-            frontier_cols = "item, strength, depth"
-            seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0"
-            expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1"
-            cycle_filter = ""
+        reason_col = ", arg_max(array_to_string(path, ' -> '), strength) AS reason" if return_paths else ""
+        # Walk-based bounded traversal: always carry path so cycle handling is
+        # identical, but only return the reason column when requested.
+        frontier_cols = "item, strength, depth, path"
+        seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0, [s.node_id]"
+        expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1, list_append(t.path, e.target)"
+        cycle_filter = "AND NOT list_contains(t.path, e.target)"
 
         exc_sql = "AND item NOT IN (SELECT node_id FROM _seeds)" if exclude else ""
         beam_sql = ""
         if beam_width:
+            # Deterministic tie-break: target id.
             beam_sql = f"QUALIFY row_number() OVER (PARTITION BY depth ORDER BY strength DESC, e.target) <= {beam_width}"
         return f"""
         WITH RECURSIVE traversal({frontier_cols}) AS (
