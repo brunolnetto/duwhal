@@ -362,6 +362,59 @@ class Duwhal:
         if strategy.startswith("popular"): return self.recommend_popular(n=n, **kwargs)
         raise ValueError(f"Unknown strategy: {strategy}")
 
+    def recommend_cf_batch(
+        self,
+        seeds_list: list[Any],
+        n: int = 10,
+        **kwargs,
+    ) -> pa.Table:
+        if not self._cf_model:
+            raise RuntimeError(
+                "Call fit_cf() first."
+            )
+
+        return self._cf_model.recommend_batch(
+            seeds_list,
+            n=n,
+            **kwargs,
+        )
+
+
+    def recommend_graph_batch(
+        self,
+        seeds_list: list[Any],
+        n: int = 10,
+        **kwargs,
+    ) -> pa.Table:
+        if not self._graph_model:
+            self.fit_graph()
+
+        return self._graph_model.recommend_batch(
+            seeds_list,
+            n=n,
+            **kwargs,
+        )
+
+
+    def recommend_popular_batch(
+        self,
+        exclude_items_list: list[Any],
+        n: int = 10,
+    ) -> pa.Table:
+        """
+        Generate popularity recommendations for multiple baskets.
+
+        Popularity does not consume seed items, so the batch input represents
+        the items excluded independently for each basket.
+        """
+        if not self._pop_model:
+            self.fit_popularity()
+
+        return self._pop_model.recommend_batch(
+            exclude_items_list,
+            n=n,
+        )
+
     def _resolve_strategy(self, strategy: str) -> str:
         if strategy != "auto": return strategy
         if self._rules is not None: return "rules"
@@ -374,6 +427,113 @@ class Duwhal:
             res = res.rename_columns(["recommended_item" if c == "item_id" else c for c in res.column_names])
         return res
 
+    def _dispatch_popularity_batch(
+        self,
+        seeds_list: list[Any],
+        n: int,
+        kwargs: dict,
+    ) -> pa.Table:
+        """
+        Adapt generic recommend_batch() semantics to Popularity.
+
+        ``seeds_list`` determines basket cardinality only.
+
+        Exclusions may be supplied either as:
+
+            exclude_items=[...]
+                Same exclusions for every basket.
+
+            exclude_items_list=[
+                [...],
+                [...],
+            ]
+                Independent exclusions for each basket.
+
+        Supplying both is ambiguous and therefore rejected.
+        """
+
+        options = dict(kwargs)
+
+        exclude_items = options.pop(
+            "exclude_items",
+            None,
+        )
+
+        exclude_items_list = options.pop(
+            "exclude_items_list",
+            None,
+        )
+
+        if (
+            exclude_items is not None
+            and exclude_items_list is not None
+        ):
+            raise ValueError(
+                "exclude_items and exclude_items_list "
+                "cannot be used together"
+            )
+
+        if options:
+            unexpected = ", ".join(
+                sorted(options)
+            )
+
+            raise TypeError(
+                "Unexpected keyword arguments for "
+                f"popularity batch: {unexpected}"
+            )
+
+        basket_count = len(
+            seeds_list
+        )
+
+        # --------------------------------------------------------------
+        # Independent exclusions per basket.
+        # --------------------------------------------------------------
+
+        if exclude_items_list is not None:
+            if (
+                len(exclude_items_list)
+                != basket_count
+            ):
+                raise ValueError(
+                    "exclude_items_list must have the "
+                    "same length as seeds_list"
+                )
+
+            exclusions = list(
+                exclude_items_list
+            )
+
+        # --------------------------------------------------------------
+        # One shared exclusion set.
+        # --------------------------------------------------------------
+
+        elif exclude_items is not None:
+            exclusions = [
+                exclude_items
+                for _ in range(
+                    basket_count
+                )
+            ]
+
+        # --------------------------------------------------------------
+        # No exclusions.
+        # --------------------------------------------------------------
+
+        else:
+            exclusions = [
+                None
+                for _ in range(
+                    basket_count
+                )
+            ]
+
+        return self.recommend_popular_batch(
+            exclusions,
+            n=n,
+        )
+
     def _dispatch_batch_recommendation(
         self,
         strategy: str,
@@ -382,27 +542,30 @@ class Duwhal:
         kwargs: dict,
     ) -> list[pa.Table] | pa.Table:
         if strategy == "cf":
-            if not self._cf_model:
-                raise RuntimeError(
-                    "Call fit_cf() first."
-                )
-
-            return self._cf_model.recommend_batch(
+            return self.recommend_cf_batch(
                 seeds_list,
                 n=n,
                 **kwargs,
             )
 
         if strategy == "graph":
-            if not self._graph_model:
-                self.fit_graph()
-
-            return self._graph_model.recommend_batch(
+            return self.recommend_graph_batch(
                 seeds_list,
                 n=n,
                 **kwargs,
             )
 
+        if strategy.startswith(
+            "popular"
+        ):
+            return self._dispatch_popularity_batch(
+                seeds_list,
+                n,
+                kwargs,
+            )
+
+        # Strategies without native batch support retain
+        # the scalar fallback.
         return [
             self.recommend(
                 seed_items=seeds,
