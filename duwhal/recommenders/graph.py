@@ -156,12 +156,17 @@ class GraphRecommender:
     ) -> str:
         score_col = self._score_column(scoring)
         reason_col = ", arg_max(array_to_string(path, ' -> '), strength) AS reason" if return_paths else ""
-        # Walk-based bounded traversal: always carry path so cycle handling is
-        # identical, but only return the reason column when requested.
-        frontier_cols = "item, strength, depth, path"
-        seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0, [s.node_id]"
-        expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1, list_append(t.path, e.target)"
-        cycle_filter = "AND NOT list_contains(t.path, e.target)"
+        # Bounded walk traversal: items can be revisited.  Path state is only
+        # carried when explanations are requested, keeping the default hot path
+        # lightweight while preserving identical score semantics.
+        if return_paths:
+            frontier_cols = "item, strength, depth, path"
+            seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0, [s.node_id]"
+            expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1, list_append(t.path, e.target)"
+        else:
+            frontier_cols = "item, strength, depth"
+            seed_select = "SELECT s.node_id AS item, 1.0::DOUBLE / COUNT(*) OVER (), 0"
+            expand_select = f"SELECT e.target, t.strength * e.{score_col}, t.depth + 1"
 
         exc_sql = "AND item NOT IN (SELECT node_id FROM _seeds)" if exclude else ""
         beam_sql = ""
@@ -179,7 +184,6 @@ class GraphRecommender:
             JOIN _item_edges_scored e ON t.item = e.source
             WHERE t.depth < {max_depth}
               AND e.weight >= {min_weight}
-              {cycle_filter}
             {beam_sql}
         )
         SELECT item AS recommended_item, {agg}(strength) AS total_strength, MIN(depth) AS min_hops {reason_col}

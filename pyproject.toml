@@ -40,6 +40,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:dateutil",
     "ignore:fetch_arrow_table.*is deprecated:DeprecationWarning",
 ]
+markers = [
+    "slow: slow or stress tests not run by default in CI",
+    "performance: performance/regression benchmarks",
+]
 
 [dependency-groups]
 dev = [

@@ -138,3 +138,22 @@ class TestPopularityRecommender:
         # Should fallback to sort_column because timestamp_col is not provided
         pop.fit()
         assert pop._fitted
+
+    def test_decay_requires_timestamp(self, loaded_conn):
+        """decay_half_life without timestamp_col or sort_column must raise."""
+        pop = PopularityRecommender(loaded_conn, strategy="global", decay_half_life=7)
+        with pytest.raises(ValueError, match="timestamp_col"):
+            pop.fit()
+
+    def test_decay_global_sort_fallback(self, conn):
+        """decay_half_life on global strategy falls back to sort_column."""
+        from duwhal.core.ingestion import load_interactions
+        df = pd.DataFrame({
+            "set_id": ["S1", "S1"],
+            "node_id": ["A", "B"],
+            "sort_column": [datetime.now(), datetime.now()]
+        })
+        load_interactions(conn, df, sort_col="sort_column")
+        pop = PopularityRecommender(conn, strategy="global", decay_half_life=7)
+        pop.fit()
+        assert pop._fitted

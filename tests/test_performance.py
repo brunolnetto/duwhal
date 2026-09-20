@@ -159,7 +159,8 @@ class TestLatencyDistributionBenchmarks:
             stats = _benchmark(db, db.recommend, ["i0"], n=10, repeats=10)
             assert stats["p50"] < 500, f"ItemCF p50={stats['p50']:.1f} ms"
 
-    def test_graph_bounded_depth1_latency_distribution(self):
+    @pytest.mark.slow
+    def test_graph_large_context_stress_depth1(self):
         df = _synthetic_large_context_stress(seed=2)
         with Duwhal() as db:
             db.load_interactions(df, set_col="user_id", node_col="item_id")
@@ -171,7 +172,8 @@ class TestLatencyDistributionBenchmarks:
             stats = _benchmark(db, recommend_fn, ["i0"], n=10, repeats=10)
             assert stats["p95"] < 1_000, f"Graph depth=1 p95={stats['p95']:.1f} ms"
 
-    def test_graph_bounded_depth2_beam50_latency_distribution(self):
+    @pytest.mark.slow
+    def test_graph_large_context_stress_depth2_beam50(self):
         df = _synthetic_large_context_stress(seed=3)
         with Duwhal() as db:
             db.load_interactions(df, set_col="user_id", node_col="item_id")
@@ -182,6 +184,26 @@ class TestLatencyDistributionBenchmarks:
 
             stats = _benchmark(db, recommend_fn, ["i0"], n=10, repeats=10)
             assert stats["p95"] < 1_000, f"Graph depth=2 beam=50 p95={stats['p95']:.1f} ms"
+
+    def test_graph_return_paths_cost(self):
+        """Pathless traversal should be substantially cheaper than path tracking."""
+        df = _synthetic_kuairec_like(seed=4)
+        with Duwhal() as db:
+            db.load_interactions(df, set_col="session_id", node_col="item_id")
+            db.fit_graph(min_cooccurrence=2, top_k_edges=50)
+            seeds = ["i0"]
+
+            start = time.perf_counter()
+            for _ in range(20):
+                db.recommend_graph(seeds, n=10, max_depth=2, beam_width=50, return_paths=False)
+            without_ms = (time.perf_counter() - start) * 1000 / 20
+
+            start = time.perf_counter()
+            for _ in range(20):
+                db.recommend_graph(seeds, n=10, max_depth=2, beam_width=50, return_paths=True)
+            with_ms = (time.perf_counter() - start) * 1000 / 20
+
+            assert without_ms < with_ms, f"pathless {without_ms:.1f} ms not cheaper than paths {with_ms:.1f} ms"
 
 
 class TestPathologicalGraphBenchmarks:
