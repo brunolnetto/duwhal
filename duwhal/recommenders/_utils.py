@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional, Union
+from typing import Any, List, Optional
 
 import pyarrow as pa
-
 
 MAX_SQL_INLIST_SIZE = 1000
 

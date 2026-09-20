@@ -1,9 +1,10 @@
 """Tests for popularity-based recommender."""
 
-import pytest
+from datetime import datetime, timedelta
+
 import pandas as pd
 import pyarrow as pa
-from datetime import datetime, timedelta
+import pytest
 
 from duwhal.core.connection import DuckDBConnection
 from duwhal.recommenders.popularity import PopularityRecommender

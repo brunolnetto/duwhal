@@ -1,8 +1,7 @@
 """Tests for association rule mining."""
 
-import pytest
-import pandas as pd
 import pyarrow as pa
+import pytest
 
 from duwhal.mining.association_rules import AssociationRules
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
-import pyarrow as pa
-from typing import List, Dict, Set, Optional
-from duwhal.core.connection import DuckDBConnection
+
 import sys
+from typing import Dict, List
+
+import pyarrow as pa
+
+from duwhal.core.connection import DuckDBConnection
 
 # Increase recursion depth for deep graphs
 sys.setrecursionlimit(100000)
@@ -37,7 +40,7 @@ class SinkSCCFinder:
     def _tarjan_scc(self, adj: Dict[str, List[str]]) -> List[List[str]]:
         state = {"idx": 0, "stack": [], "on_stack": set(), "index": {}, "lowlink": {}, "sccs": []}
         nodes = set(adj.keys()) | {t for targets in adj.values() for t in targets}
-        
+
         def strongconnect(v):
             state["index"][v] = state["lowlink"][v] = state["idx"]
             state["idx"] += 1
@@ -76,12 +79,12 @@ class SinkSCCFinder:
         adj = self._build_adjacency(min_confidence)
         sccs = self._tarjan_scc(adj)
         is_sink = self._identify_sinks(adj, sccs)
-        
+
         res = []
         for i, scc in enumerate(sccs):
             if is_sink[i]:
                 mems = "|".join(sorted(scc))
                 res.extend([{"node": n, "scc_id": i, "scc_size": len(scc), "is_sink": True, "members": mems} for n in scc])
-        
+
         schema = pa.schema([("node", pa.string()), ("scc_id", pa.int32()), ("scc_size", pa.int32()), ("is_sink", pa.bool_()), ("members", pa.string())])
         return pa.Table.from_pylist(res, schema=schema) if res else pa.Table.from_pylist([], schema=schema)

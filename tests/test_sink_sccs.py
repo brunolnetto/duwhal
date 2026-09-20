@@ -1,7 +1,8 @@
 
-import pytest
 import pandas as pd
+
 from duwhal import InteractionGraph
+
 
 def test_sink_scc_identification():
     # Construct a graph with two sink SCCs and some transient nodes.

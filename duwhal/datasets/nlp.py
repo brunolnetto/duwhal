@@ -4,8 +4,10 @@ duwhal.datasets.nlp — NLP corpus and token co-occurrence generators.
 Datasets for semantic proximity, topic modelling, and n-gram discovery.
 """
 from __future__ import annotations
-import pandas as pd
+
 from typing import Optional
+
+import pandas as pd
 
 
 def generate_nlp_corpus(seed: Optional[int] = None) -> pd.DataFrame:

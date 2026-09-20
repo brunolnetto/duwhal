@@ -3,12 +3,10 @@
 # Tests configuration
 # ---------------------------------------------------------------------------
 
-import pytest
 import pandas as pd
-import narwhals as nw
+import pytest
 
 from duwhal.core.connection import DuckDBConnection
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

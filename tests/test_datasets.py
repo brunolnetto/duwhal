@@ -1,13 +1,14 @@
 
 import pandas as pd
-import pytest
+
 from duwhal.datasets.genomics import generate_genomics_data
 from duwhal.datasets.media import generate_playlist_data
 from duwhal.datasets.nlp import generate_nlp_corpus
-from duwhal.datasets.retail import generate_retail_transactions, generate_benchmark_patterns
+from duwhal.datasets.retail import generate_benchmark_patterns, generate_retail_transactions
 from duwhal.datasets.scaling import generate_large_scale_data
 from duwhal.datasets.scc_synthetic import generate_3scc_dataset
 from duwhal.datasets.social import generate_filter_bubble_data
+
 
 def test_generate_genomics_data():
     df = generate_genomics_data(n_patients=10, n_genes=5, n_generic_mutations=20)
@@ -72,16 +73,16 @@ def test_generate_3scc_dataset():
         nodes_per_scc=5,
         n_transient=2,
         baskets_per_scc=10,
-        bridge_baskets=5 
+        bridge_baskets=5
     )
     assert isinstance(df, pd.DataFrame)
     assert isinstance(metadata, dict)
     assert not df.empty
     assert list(df.columns) == ["basket_id", "product_id"]
-    
+
     # Check metadata keys
     expected_keys = [
-        "scc_ranges", "transient_range", "n_nodes", 
+        "scc_ranges", "transient_range", "n_nodes",
         "n_baskets", "n_sccs_expected", "test_baskets", "node_labels"
     ]
     for key in expected_keys:

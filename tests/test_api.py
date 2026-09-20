@@ -1,9 +1,8 @@
 """Integration tests for the high-level Duwhal API."""
 
-import pytest
 import pandas as pd
 import pyarrow as pa
-import narwhals as nw
+import pytest
 
 from duwhal.api import Duwhal
 
@@ -207,7 +206,7 @@ class TestCoverageGaps:
             ("T1", "B", "2024-01-01 10:05"), # Gap 1
             ("T1", "C", "2024-01-01 10:10"), # Gap A->C is > 1?
         ], columns=["order_id", "item_id", "ts"])
-        
+
         from duwhal.api import Duwhal
         with Duwhal() as db:
              db.conn.register("source", df)
@@ -215,11 +214,11 @@ class TestCoverageGaps:
              db.conn.execute("CREATE TABLE interactions AS SELECT order_id AS set_id, item_id AS node_id, ts::TIMESTAMP AS ts FROM source")
              # max_gap=0
              res = db.sequential_patterns(timestamp_col="ts", min_support=0.01, max_gap=0)
-             
+
              # Convert to dict for easier checking
              res_pylist = res.to_pylist()
              pairs = set((r["prefix"], r["suffix"]) for r in res_pylist)
-             
+
              assert ("A", "B") in pairs
              assert ("A", "C") not in pairs
 
@@ -262,7 +261,7 @@ class TestDuwhalSequences:
             ("T2", "A", "2024-01-01 11:00"),
             ("T2", "B", "2024-01-01 11:05"),
         ], columns=["order_id", "item_id", "ts"])
-        
+
         with Duwhal() as db:
              db.conn.register("source", df)
              # Manual table with proper schema
@@ -292,7 +291,7 @@ class TestAPICoverage:
         # A, B, C are fully correlated.
         # Rules: A->B, A->C, B->A, B->C, C->A, C->B
         duwhal_instance.association_rules(min_support=0.01, min_confidence=0.01)
-        
+
         # Recommendations for [A]: should get B and C.
         # Set n=1. Loop should break after finding 1.
         res = duwhal_instance.recommend_by_rules(["A"], n=1)

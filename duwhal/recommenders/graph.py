@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, List
 
 import pyarrow as pa
 
@@ -21,12 +21,15 @@ class GraphRecommender:
         self._built = False
         self._prepared_scoring: str | None = None
         self._prepare_edges_calls = 0
+        self._stats = None
 
     @property
     def prepare_edges_calls(self) -> int:
         return self._prepare_edges_calls
 
-    def build(self) -> GraphRecommender:
+    def build(self, stats=None) -> GraphRecommender:
+        import time
+        start = time.perf_counter()
         self.conn.execute(f"CREATE OR REPLACE TEMP TABLE _item_totals AS SELECT node_id, COUNT(DISTINCT set_id) AS total_interactions FROM {self.table_name} GROUP BY 1")
         self.conn.execute(f"""
             CREATE OR REPLACE TABLE _item_adjacency AS
@@ -61,6 +64,14 @@ class GraphRecommender:
         """)
         self._built = True
         self._prepared_scoring = None
+        duration_ms = (time.perf_counter() - start) * 1000
+        if stats is not None:
+            stats.duration_ms = duration_ms
+            stats.table_stats = {
+                "num_nodes": self.conn.execute("SELECT COUNT(*) FROM _item_adjacency").fetchone()[0],
+                "num_edges": self.conn.execute("SELECT SUM(len(neighbors)) FROM _item_adjacency").fetchone()[0],
+            }
+            self._stats = stats
         return self
 
     def get_neighbors(self, item_id: str) -> pa.Table:

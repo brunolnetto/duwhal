@@ -1,8 +1,7 @@
 """Tests for item-based collaborative filtering."""
 
-import pytest
-import pandas as pd
 import pyarrow as pa
+import pytest
 
 from duwhal.recommenders.item_cf import ItemCF
 
@@ -122,7 +121,7 @@ class TestItemCF:
         # Build graph first to create _item_adjacency
         gr = GraphRecommender(loaded_conn)
         gr.build()
-        
+
         cf = ItemCF(loaded_conn, min_cooccurrence=1)
         # This should hit the optimized _build_cooccurrence because _item_adjacency exists
         cf.fit()

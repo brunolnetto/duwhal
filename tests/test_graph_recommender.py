@@ -1,11 +1,11 @@
 
 """Tests for the new Graph Recommender."""
 
-import pytest
 import pandas as pd
 import pyarrow as pa
+
 from duwhal.recommenders.graph import GraphRecommender
-from duwhal.api import Duwhal
+
 
 class TestGraphRecommender:
 
@@ -14,36 +14,36 @@ class TestGraphRecommender:
         gr = GraphRecommender(loaded_conn, min_cooccurrence=1)
         # Should return self
         assert gr.build() is gr
-        
+
         # Check table exists and has array columns
         # neighbors should be a LIST type
         schema = loaded_conn.execute("DESCRIBE _item_adjacency").fetchall()
         col_names = [row[0] for row in schema]
         col_types = [row[1] for row in schema]
-        
+
         assert "source" in col_names
         assert "neighbors" in col_names
         assert "weights" in col_names
-        
+
         # Check content (milk -> bread)
         res = loaded_conn.execute("SELECT * FROM _item_adjacency WHERE source = 'milk'").fetchone()
         assert res is not None
         # neighbors list should contain 'bread'
-        neighbors = res[1] 
+        neighbors = res[1]
         assert "bread" in neighbors
 
     def test_recommend_basic(self, loaded_conn):
         """Test basic 1-hop recommendation (milk -> bread)."""
         gr = GraphRecommender(loaded_conn, min_cooccurrence=1)
         gr.build()
-        
+
         recs = gr.recommend(["milk"], max_depth=1, n=5)
         assert isinstance(recs, pa.Table)
         assert recs.num_rows > 0
-        
+
         items = recs.column("recommended_item").to_pylist()
         scores = recs.column("total_strength").to_pylist()
-        
+
         # Milk co-occurs with bread (3 times in conftest data usually?)
         assert "bread" in items
         idx = items.index("bread")
@@ -64,24 +64,24 @@ class TestGraphRecommender:
             ("T1", "A"), ("T1", "B"),
             ("T2", "B"), ("T2", "C"),
         ], columns=["order_id", "item_id"])
-        
+
         from duwhal.core.ingestion import load_interactions
         load_interactions(conn, df, set_col="order_id", node_col="item_id")
-        
+
         gr = GraphRecommender(conn, min_cooccurrence=1)
         gr.build()
-        
+
         # Recommend for A
         # Hop 1: B (weight 1)
         # Hop 2: C (neighbor of B, weight 1)
         recs = gr.recommend(["A"], max_depth=2, n=5)
-        
+
         items = recs.column("recommended_item").to_pylist()
         hops = recs.column("min_hops").to_pylist()
-        
+
         assert "B" in items
         assert "C" in items
-        
+
         # Check hops
         b_idx = items.index("B")
         c_idx = items.index("C")
@@ -107,12 +107,12 @@ class TestGraphRecommender:
         gr = GraphRecommender(loaded_conn, min_cooccurrence=1)
         gr.build()
         recs = gr.recommend(["milk"], max_depth=2, scoring="probability")
-        
+
         scores = recs.column("total_strength").to_pylist()
         assert all(s > 0 for s in scores)
         # Probabilities should be small (<= 1 usually, unless many paths)
         # With small graph, likely <= 1
-        assert all(s <= 2.0 for s in scores) 
+        assert all(s <= 2.0 for s in scores)
 
     def test_recommend_auto_build(self, loaded_conn):
         """Test that recommend calls build() if not built."""
@@ -130,10 +130,10 @@ class TestGraphRecommender:
         assert "weight" in neighbors.column_names
         pylist = neighbors.to_pylist()
         assert any( row["neighbor"] == "bread" for row in pylist )
-        
+
 class TestDuwhalGraphAPI:
     """Test the integration in the main class."""
-    
+
     def test_fit_and_recommend_graph(self, duwhal_instance):
         db = duwhal_instance
         # Auto-fit

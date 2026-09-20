@@ -1,7 +1,11 @@
 from __future__ import annotations
-import pyarrow as pa
+
 from typing import Optional
+
+import pyarrow as pa
+
 from duwhal.core.connection import DuckDBConnection
+
 
 class FrequentItemsets:
     def __init__(

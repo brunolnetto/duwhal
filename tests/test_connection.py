@@ -1,6 +1,5 @@
 """Tests for DuckDB connection management."""
 
-import pytest
 from duwhal.core.connection import DuckDBConnection
 
 
@@ -72,7 +71,9 @@ class TestDuckDBConnection:
             assert result[0] == 99
 
 from unittest.mock import MagicMock, patch
+
 import pyarrow as pa
+
 
 class TestConnectionCoverage:
     def test_connection_query_returns_table_directly(self):
@@ -83,7 +84,7 @@ class TestConnectionCoverage:
             mock_table = pa.Table.from_pydict({"a": [1]})
             # arrow() returns the table directly
             mock_result.arrow.return_value = mock_table
-            
+
             with patch.object(conn, 'execute', return_value=mock_result):
                 res = conn.query("SELECT 1")
                 assert isinstance(res, pa.Table)

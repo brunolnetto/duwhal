@@ -27,8 +27,11 @@ class PopularityRecommender:
         self.window_days = window_days
         self.decay_half_life = decay_half_life
         self._fitted = False
+        self._stats = None
 
-    def fit(self):
+    def fit(self, stats=None):
+        import time
+        start = time.perf_counter()
         if self.strategy == "trending" and not self.timestamp_col:
             # check for sort_column
             try:
@@ -68,6 +71,13 @@ class PopularityRecommender:
             FROM _popularity
         """)
         self._fitted = True
+        duration_ms = (time.perf_counter() - start) * 1000
+        if stats is not None:
+            stats.duration_ms = duration_ms
+            stats.table_stats = {
+                "num_items": self.conn.execute("SELECT COUNT(*) FROM _popularity").fetchone()[0],
+            }
+            self._stats = stats
         return self
 
     def recommend(self, n: int = 10, exclude_items: Optional[Any] = None) -> pa.Table:

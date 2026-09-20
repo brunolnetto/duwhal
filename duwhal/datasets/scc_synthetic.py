@@ -3,9 +3,11 @@ demo/synthetic.py — Controlled 3-SCC synthetic dataset.
 Generates transactions with known sink SCCs for testing.
 """
 from __future__ import annotations
-import pandas as pd
+
+from typing import Dict, Tuple
+
 import numpy as np
-from typing import Dict, List, Tuple
+import pandas as pd
 
 
 def generate_3scc_dataset(
@@ -26,10 +28,10 @@ def generate_3scc_dataset(
     - Transient: nodes 60..69 (bridge products that point into SCCs)
     """
     rng = np.random.default_rng(seed)
-    
+
     all_baskets = []
     basket_id = 0
-    
+
     # Ground truth
     scc_ranges = [
         list(range(0, nodes_per_scc)),
@@ -37,7 +39,7 @@ def generate_3scc_dataset(
         list(range(2 * nodes_per_scc, 3 * nodes_per_scc)),
     ]
     transient_range = list(range(3 * nodes_per_scc, 3 * nodes_per_scc + n_transient))
-    
+
     # 1. Dense intra-SCC baskets — creates strong internal connectivity
     for scc_idx, scc_nodes in enumerate(scc_ranges):
         for _ in range(baskets_per_scc):
@@ -47,7 +49,7 @@ def generate_3scc_dataset(
             for item in items:
                 all_baskets.append((f"B{basket_id}", f"P{item}"))
             basket_id += 1
-    
+
     # 2. Bridge baskets: transient nodes co-occur with specific SCC nodes
     #    Each transient node appears in ~20 baskets with 2-3 specific SCC targets.
     #    The SCC nodes appear in ~150+ baskets total, so:
@@ -63,7 +65,7 @@ def generate_3scc_dataset(
             all_baskets.append((f"B{basket_id}", f"P{t_node}"))
             all_baskets.append((f"B{basket_id}", f"P{target_item}"))
             basket_id += 1
-    
+
     # 3. A few cross-SCC baskets (noise) — should be filtered by min_support
     for _ in range(10):
         s1 = rng.integers(0, 3)
@@ -73,9 +75,9 @@ def generate_3scc_dataset(
         all_baskets.append((f"B{basket_id}", f"P{i1}"))
         all_baskets.append((f"B{basket_id}", f"P{i2}"))
         basket_id += 1
-    
+
     df = pd.DataFrame(all_baskets, columns=["basket_id", "product_id"])
-    
+
     # Generate held-out test baskets
     test_baskets = []
     for scc_idx, scc_nodes in enumerate(scc_ranges):
@@ -83,7 +85,7 @@ def generate_3scc_dataset(
             k = rng.integers(2, 5)
             items = rng.choice(scc_nodes, size=min(k, len(scc_nodes)), replace=False)
             test_baskets.append([int(i) for i in items])
-    
+
     metadata = {
         "scc_ranges": scc_ranges,
         "transient_range": transient_range,
@@ -93,5 +95,5 @@ def generate_3scc_dataset(
         "test_baskets": test_baskets,
         "node_labels": {i: f"P{i}" for i in range(3 * nodes_per_scc + n_transient)},
     }
-    
+
     return df, metadata

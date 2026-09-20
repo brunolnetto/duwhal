@@ -5,8 +5,10 @@ Datasets for filter bubble detection, ecosystem equilibrium analysis,
 and community stability research.
 """
 from __future__ import annotations
-import pandas as pd
+
 from typing import Optional
+
+import pandas as pd
 
 
 def generate_filter_bubble_data(seed: Optional[int] = None) -> pd.DataFrame:

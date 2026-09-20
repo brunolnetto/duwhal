@@ -27,8 +27,11 @@ class ItemCF:
         self.top_k_similar = top_k_similar
         self.shrinkage = shrinkage
         self._fitted = False
+        self._stats = None
 
-    def fit(self):
+    def fit(self, stats=None):
+        import time
+        start = time.perf_counter()
         # Validation for manually set metric
         if self.metric not in ["jaccard", "cosine", "lift"]:
             raise ValueError(f"Unknown metric: {self.metric}")
@@ -88,6 +91,14 @@ class ItemCF:
         """)
 
         self._fitted = True
+        duration_ms = (time.perf_counter() - start) * 1000
+        if stats is not None:
+            stats.duration_ms = duration_ms
+            stats.table_stats = {
+                "num_items": self.conn.execute("SELECT COUNT(DISTINCT item_a) FROM _item_similarity").fetchone()[0],
+                "num_pairs": self.conn.execute("SELECT COUNT(*) FROM _item_similarity").fetchone()[0],
+            }
+            self._stats = stats
         return self
 
     def get_similar_items(self, item_id: str, n: int = 10) -> pa.Table:

@@ -1,8 +1,12 @@
 from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 import pyarrow as pa
-from typing import Optional, List, Dict, Any
+
 from duwhal.core.connection import DuckDBConnection
 from duwhal.mining.frequent_itemsets import FrequentItemsets
+
 
 class AssociationRules:
     METRICS = ["support", "confidence", "lift", "leverage", "conviction", "zhang"]
@@ -19,7 +23,7 @@ class AssociationRules:
         if not (0 < min_support <= 1): raise ValueError("min_support must be in (0, 1]")
         if not (0 < min_confidence <= 1): raise ValueError("min_confidence must be in (0, 1]")
         if min_lift < 0: raise ValueError("min_lift must be non-negative")
-        
+
         self.conn, self.table_name = conn, table_name
         self.min_support, self.min_confidence, self.min_lift = min_support, min_confidence, min_lift
         self.max_antecedent_len = max_antecedent_len
@@ -65,11 +69,19 @@ class AssociationRules:
         if fi is None: return FrequentItemsets(self.conn, table_name=self.table_name, min_support=self.min_support).fit()
         return fi
 
-    def fit(self, frequent_itemsets: Optional[pa.Table] = None) -> pa.Table:
+    def fit(self, frequent_itemsets: Optional[pa.Table] = None, stats=None) -> pa.Table:
+        import time
+        start = time.perf_counter()
         fi = self._fit_fi(frequent_itemsets)
         self.conn.register("_fi", fi)
         processed = [p for p in (self._process_single_rule(row) for row in self._fetch_refined_rules()) if p]
-        if not processed: return self._get_empty_table()
-        processed.sort(key=lambda x: x["lift"], reverse=True)
-        self._rules = pa.Table.from_pylist(processed)
+        if not processed:
+            self._rules = self._get_empty_table()
+        else:
+            processed.sort(key=lambda x: x["lift"], reverse=True)
+            self._rules = pa.Table.from_pylist(processed)
+        duration_ms = (time.perf_counter() - start) * 1000
+        if stats is not None:
+            stats.duration_ms = duration_ms
+            stats.table_stats = {"num_rules": self._rules.num_rows}
         return self._rules

@@ -4,8 +4,10 @@ duwhal.datasets.media — Music, playlist, and media content generators.
 Datasets for recommendation discovery across genres and content bridging.
 """
 from __future__ import annotations
-import pandas as pd
+
 from typing import Optional
+
+import pandas as pd
 
 
 def generate_playlist_data(seed: Optional[int] = None) -> pd.DataFrame:

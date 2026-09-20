@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from duwhal.core.connection import DuckDBConnection
 from duwhal.core.facets import merge_recommendation_tables, split_by_facet
 from duwhal.core.ingestion import load_interaction_matrix, load_interactions
+from duwhal.core.stats import ModelStats
 from duwhal.mining.association_rules import AssociationRules
 from duwhal.mining.frequent_itemsets import FrequentItemsets
 from duwhal.mining.sequences import SequentialPatterns
@@ -34,6 +35,7 @@ class Duwhal:
         self.conn = DuckDBConnection(database=database, memory_limit=memory_limit, threads=threads)
         self.table_name = "interactions"
         self._rules, self._cf_model, self._graph_model, self._pop_model = None, None, None, None
+        self._model_stats: list[ModelStats] = []
 
     @property
     def _graph(self) -> Optional[GraphRecommender]: return self._graph_model
@@ -79,14 +81,18 @@ class Duwhal:
         return FrequentItemsets(self.conn, table_name=self.table_name, **kwargs).fit()
 
     def association_rules(self, **kwargs) -> pa.Table:
-        self._rules = AssociationRules(self.conn, table_name=self.table_name, **kwargs).fit()
+        stats = ModelStats(model_name="association_rules", fit_params=kwargs)
+        self._rules = AssociationRules(self.conn, table_name=self.table_name, **kwargs).fit(stats=stats)
+        self._model_stats.append(stats)
         return self._rules
 
     def sequential_patterns(self, **kwargs) -> pa.Table:
         return SequentialPatterns(self.conn, table_name=self.table_name, **kwargs).fit()
 
     def fit_cf(self, **kwargs) -> Duwhal:
-        self._cf_model = ItemCF(self.conn, table_name=self.table_name, **kwargs).fit()
+        stats = ModelStats(model_name="item_cf", fit_params=kwargs)
+        self._cf_model = ItemCF(self.conn, table_name=self.table_name, **kwargs).fit(stats=stats)
+        self._model_stats.append(stats)
         return self
 
     def recommend_cf(self, *args, **kwargs) -> pa.Table:
@@ -94,7 +100,9 @@ class Duwhal:
         return self._cf_model.recommend(*args, **kwargs)
 
     def fit_graph(self, alpha: float = 0.0, **kwargs) -> Duwhal:
-        self._graph_model = GraphRecommender(self.conn, table_name=self.table_name, alpha=alpha, **kwargs).build()
+        stats = ModelStats(model_name="graph", fit_params={"alpha": alpha, **kwargs})
+        self._graph_model = GraphRecommender(self.conn, table_name=self.table_name, alpha=alpha, **kwargs).build(stats=stats)
+        self._model_stats.append(stats)
         return self
 
     def recommend_graph(self, *args, **kwargs) -> pa.Table:
@@ -106,7 +114,9 @@ class Duwhal:
         return self._graph_model.score_basket(items)
 
     def fit_popularity(self, strategy: str = "global", window_days: int = 30, **kwargs) -> Duwhal:
-        self._pop_model = PopularityRecommender(self.conn, table_name=self.table_name, strategy=strategy, window_days=window_days, **kwargs).fit()
+        stats = ModelStats(model_name="popularity", fit_params={"strategy": strategy, "window_days": window_days, **kwargs})
+        self._pop_model = PopularityRecommender(self.conn, table_name=self.table_name, strategy=strategy, window_days=window_days, **kwargs).fit(stats=stats)
+        self._model_stats.append(stats)
         return self
 
     def recommend_popular(self, *args, **kwargs) -> pa.Table:
@@ -467,6 +477,19 @@ class Duwhal:
         ).fit()
 
     def sql(self, query: str) -> pa.Table: return self.conn.query(query)
+
+    def model_stats(self) -> pa.Table:
+        """Return fit metadata and table statistics for all fitted models."""
+        if not self._model_stats:
+            return pa.Table.from_pylist([], schema=pa.schema([
+                ("model_name", pa.string()),
+                ("param_name", pa.string()),
+                ("param_value", pa.string()),
+                ("duration_ms", pa.float64()),
+                ("timestamp", pa.float64()),
+            ]))
+        return pa.concat_tables([s.to_arrow() for s in self._model_stats])
+
     def close(self): self.conn.close()
     def __enter__(self): return self
     def __exit__(self, *_): self.close()

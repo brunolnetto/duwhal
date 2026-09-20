@@ -4,9 +4,11 @@ duwhal.datasets.scaling — Large-scale synthetic data generators.
 Datasets for performance benchmarking, ingestion testing, and scalability analysis.
 """
 from __future__ import annotations
+
+from typing import Optional
+
 import numpy as np
 import pandas as pd
-from typing import Optional
 
 
 def generate_large_scale_data(

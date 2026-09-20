@@ -1,8 +1,11 @@
 from __future__ import annotations
-from typing import List, Optional, Any
-import pyarrow as pa
+
+from typing import Any, List
+
 import narwhals as nw
+
 from duwhal.api import Duwhal
+
 
 class InteractionGraph:
     """Universal Graph Interface."""
