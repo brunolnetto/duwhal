@@ -3,6 +3,7 @@
 
 import pandas as pd
 import pyarrow as pa
+import pytest
 
 from duwhal.recommenders.graph import GraphRecommender
 

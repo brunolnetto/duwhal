@@ -52,14 +52,14 @@ class TestLoadInteractions:
             conn, transactions_df,
             set_col="order_id", node_col="item_id"
         )
-        # With context-item deduplication across appends, re-loading the same
-        # batch adds no duplicate rows.
+        # Ingestion preserves the raw event stream, so appending the same batch
+        # duplicates rows; the contract is "append", not "deduplicate".
         count2 = load_interactions(
             conn, transactions_df,
             set_col="order_id", node_col="item_id",
             append=True
         )
-        assert count2 == len(transactions_df)
+        assert count2 == 2 * len(transactions_df)
 
     def test_replace_mode(self, conn, transactions_df):
         load_interactions(
@@ -198,7 +198,9 @@ class TestLoadInteractions:
         )
         # Sequential pattern A -> B must still be detectable.
         from duwhal.mining.sequences import SequentialPatterns
-        seq = SequentialPatterns(conn, table_name="interactions", timestamp_col="sort_column", min_support=0.01)
+        seq = SequentialPatterns(
+            conn, table_name="interactions", timestamp_col="sort_column", min_support=0.01
+        )
         result = seq.fit()
         patterns = {r["pattern"] for r in result.to_pylist()}
         assert "A -> B" in patterns

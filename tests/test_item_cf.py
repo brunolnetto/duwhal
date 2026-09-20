@@ -135,7 +135,6 @@ class TestItemCF:
             seed_weights={"milk": 2.0, "bread": 1.0},
             n=5,
         )
-        unweighted = cf.recommend(["milk", "bread"], n=5)
         assert isinstance(weighted, pa.Table)
         assert weighted.num_rows > 0
 

@@ -9,6 +9,14 @@ from duwhal.recommenders._utils import normalize_seeds, seed_table
 
 
 class PopularityRecommender:
+    """Popularity recommender measuring context penetration.
+
+    The default score counts ``COUNT(DISTINCT set_id)`` and normalises it to a
+    probability distribution. This is **context popularity** (also called
+    context penetration): how many distinct contexts contain an item, not how
+    many raw events it received.
+    """
+
     def __init__(
         self,
         conn: DuckDBConnection,
