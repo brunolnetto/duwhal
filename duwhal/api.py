@@ -374,6 +374,45 @@ class Duwhal:
             res = res.rename_columns(["recommended_item" if c == "item_id" else c for c in res.column_names])
         return res
 
+    def _dispatch_batch_recommendation(
+        self,
+        strategy: str,
+        seeds_list: list[Any],
+        n: int,
+        kwargs: dict,
+    ) -> list[pa.Table] | pa.Table:
+        if strategy == "cf":
+            if not self._cf_model:
+                raise RuntimeError(
+                    "Call fit_cf() first."
+                )
+
+            return self._cf_model.recommend_batch(
+                seeds_list,
+                n=n,
+                **kwargs,
+            )
+
+        if strategy == "graph":
+            if not self._graph_model:
+                self.fit_graph()
+
+            return self._graph_model.recommend_batch(
+                seeds_list,
+                n=n,
+                **kwargs,
+            )
+
+        return [
+            self.recommend(
+                seed_items=seeds,
+                strategy=strategy,
+                n=n,
+                **kwargs,
+            )
+            for seeds in seeds_list
+        ]
+
     def recommend_batch(
         self,
         seeds_list: list[Any],
@@ -383,30 +422,20 @@ class Duwhal:
     ) -> list[pa.Table] | pa.Table:
         """Generate recommendations for multiple seed baskets.
 
-        Parameters
-        ----------
-        seeds_list:
-            List of seed baskets.  Each basket may be a list of items or a
-            dict mapping item to weight.
-        strategy, n, **kwargs:
-            Forwarded to :meth:`recommend` for non-CF strategies.  For
-            ``strategy="cf"`` the model's vectorized batch inference is used.
-
-        Returns
-        -------
-        list[pa.Table] or pa.Table
-            One recommendation table per basket for non-CF strategies; a
-            single table with ``basket_id`` for CF.
+        Strategies with native batch implementations return a single Arrow
+        table containing ``basket_id``. Other strategies fall back to scalar
+        recommendation and return one table per basket.
         """
-        strategy = self._resolve_strategy(strategy)
-        if strategy == "cf":
-            if not self._cf_model:
-                raise RuntimeError("Call fit_cf() first.")
-            return self._cf_model.recommend_batch(seeds_list, n=n, **kwargs)
-        return [
-            self.recommend(seed_items=seeds, strategy=strategy, n=n, **kwargs)
-            for seeds in seeds_list
-        ]
+        strategy = self._resolve_strategy(
+            strategy
+        )
+
+        return self._dispatch_batch_recommendation(
+            strategy,
+            seeds_list,
+            n,
+            kwargs,
+        )
 
     def find_sink_sccs(self, min_cooccurrence: int = 5, min_confidence: float = 0.0) -> pa.Table:
         """Identifies Sink Strongly Connected Components (Equilibrium Communities)."""
