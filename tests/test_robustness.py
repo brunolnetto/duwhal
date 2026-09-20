@@ -162,7 +162,7 @@ def test_graph_recommender_unbuilt(loaded_conn):
 
 def test_path_integral_features(transactions_df):
     db = Duwhal().load(transactions_df, set_col="order_id", node_col="item_id")
-    res = db.recommend(["milk"], strategy="graph", scoring="path")
+    res = db.recommend(["milk"], strategy="graph", scoring="path", return_paths=True)
     assert "reason" in res.column_names
     assert "milk ->" in res.to_pylist()[0]["reason"]
     db.fit_graph(alpha=1.0)
