@@ -63,8 +63,13 @@ class ItemCF:
             score_expr = f"{score_expr} * (p.cooc / (p.cooc + {self.shrinkage}))"
 
         self.conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _distinct_interactions AS
+            SELECT DISTINCT set_id, node_id FROM {self.table_name}
+        """)
+
+        self.conn.execute(f"""
             CREATE OR REPLACE TEMP TABLE _item_counts AS
-            SELECT node_id, COUNT(*) AS cnt FROM {self.table_name} GROUP BY 1
+            SELECT node_id, COUNT(DISTINCT set_id) AS cnt FROM {self.table_name} GROUP BY 1
         """)
 
         self.conn.execute(f"""
@@ -74,8 +79,8 @@ class ItemCF:
                     a.node_id AS item_a,
                     b.node_id AS item_b,
                     COUNT(DISTINCT a.set_id) AS cooc
-                FROM {self.table_name} a
-                JOIN {self.table_name} b
+                FROM _distinct_interactions a
+                JOIN _distinct_interactions b
                   ON a.set_id = b.set_id
                  AND a.node_id < b.node_id
                 GROUP BY 1, 2

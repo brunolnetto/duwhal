@@ -39,7 +39,11 @@ class GraphRecommender:
         import time
         self._validate_params()
         start = time.perf_counter()
-        self.conn.execute(f"CREATE OR REPLACE TEMP TABLE _item_totals AS SELECT node_id, COUNT(DISTINCT set_id) AS total_interactions FROM {self.table_name} GROUP BY 1")
+        self.conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _distinct_interactions AS
+            SELECT DISTINCT set_id, node_id FROM {self.table_name}
+        """)
+        self.conn.execute("CREATE OR REPLACE TEMP TABLE _item_totals AS SELECT node_id, COUNT(DISTINCT set_id) AS total_interactions FROM _distinct_interactions GROUP BY 1")
 
         # Unordered co-occurrence computed once, then expanded to both directions.
         self.conn.execute(f"""
@@ -48,8 +52,8 @@ class GraphRecommender:
                 a.node_id AS item_a,
                 b.node_id AS item_b,
                 COUNT(DISTINCT a.set_id) AS cooc
-            FROM {self.table_name} a
-            JOIN {self.table_name} b
+            FROM _distinct_interactions a
+            JOIN _distinct_interactions b
               ON a.set_id = b.set_id
              AND a.node_id < b.node_id
             GROUP BY 1, 2
@@ -60,21 +64,21 @@ class GraphRecommender:
             CREATE OR REPLACE TABLE _item_adjacency AS
             SELECT
                 source,
-                list(target ORDER BY cooc DESC) AS neighbors,
-                list(cooc ORDER BY cooc DESC) AS weights
+                list(target ORDER BY cooc DESC, target) AS neighbors,
+                list(cooc ORDER BY cooc DESC, target) AS weights
             FROM (
                 SELECT
                     item_a AS source,
                     item_b AS target,
                     cooc,
-                    row_number() OVER (PARTITION BY item_a ORDER BY cooc DESC) AS rn_a
+                    row_number() OVER (PARTITION BY item_a ORDER BY cooc DESC, item_b) AS rn_a
                 FROM _item_unordered_pairs
                 UNION ALL
                 SELECT
                     item_b AS source,
                     item_a AS target,
                     cooc,
-                    row_number() OVER (PARTITION BY item_b ORDER BY cooc DESC) AS rn_b
+                    row_number() OVER (PARTITION BY item_b ORDER BY cooc DESC, item_a) AS rn_b
                 FROM _item_unordered_pairs
             ) directed
             {f"WHERE rn_a <= {self.top_k_edges}" if self.top_k_edges else ""}
