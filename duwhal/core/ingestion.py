@@ -59,28 +59,12 @@ def _prepare_file_source(conn, source, set_col, node_col, sort_col):
     e = f", {sort_col} AS sort_column" if sort_col else ""
     conn.execute(f"CREATE OR REPLACE TEMP TABLE _tmp_interactions AS SELECT {set_col}::VARCHAR AS set_id, {node_col}::VARCHAR AS node_id {e} FROM _tmp_raw WHERE {set_col} IS NOT NULL AND {node_col} IS NOT NULL")
 
-def _dedup_tmp_interactions(has_sort):
-    if has_sort:
-        return """
-            SELECT
-                set_id::VARCHAR AS set_id,
-                node_id::VARCHAR AS node_id,
-                MAX(sort_column) AS sort_column
-            FROM _tmp_interactions
-            GROUP BY set_id, node_id
-        """
-    return """
-        SELECT DISTINCT
-            set_id::VARCHAR AS set_id,
-            node_id::VARCHAR AS node_id
-        FROM _tmp_interactions
-    """
-
-
 def _create_new_table(conn, table_name, has_sort):
+    e = ", sort_column" if has_sort else ""
     conn.execute(f"""
         CREATE OR REPLACE TABLE {table_name} AS
-        {_dedup_tmp_interactions(has_sort)}
+        SELECT set_id::VARCHAR AS set_id, node_id::VARCHAR AS node_id {e}
+        FROM _tmp_interactions
     """)
 
 
@@ -88,27 +72,12 @@ def _append_to_table(conn, table_name, has_sort):
     if has_sort and not _check_column_exists(conn, table_name, "sort_column"):
         res = conn.execute("SELECT typeof(sort_column) FROM _tmp_interactions LIMIT 1").fetchone()
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN sort_column {res[0] if res else 'VARCHAR'}")
-    new_rows = _dedup_tmp_interactions(has_sort)
-    if has_sort:
-        conn.execute(f"""
-            INSERT INTO {table_name} BY NAME
-            SELECT new_rows.*
-            FROM ({new_rows}) new_rows
-            LEFT JOIN {table_name} existing
-              ON existing.set_id = new_rows.set_id
-             AND existing.node_id = new_rows.node_id
-            WHERE existing.set_id IS NULL
-        """)
-    else:
-        conn.execute(f"""
-            INSERT INTO {table_name} BY NAME
-            SELECT new_rows.*
-            FROM ({new_rows}) new_rows
-            LEFT JOIN {table_name} existing
-              ON existing.set_id = new_rows.set_id
-             AND existing.node_id = new_rows.node_id
-            WHERE existing.set_id IS NULL
-        """)
+    e = ", sort_column" if has_sort else ""
+    conn.execute(f"""
+        INSERT INTO {table_name} BY NAME
+        SELECT set_id::VARCHAR AS set_id, node_id::VARCHAR AS node_id {e}
+        FROM _tmp_interactions
+    """)
 
 def _handle_table_upsert(conn, table_name, append, has_sort):
     if not append or not conn.table_exists(table_name):

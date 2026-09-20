@@ -79,6 +79,15 @@ class TestPopularityRecommender:
         assert "bread" not in item_ids
         assert "milk" not in item_ids
 
+    def test_context_popularity_semantics(self, loaded_conn):
+        """Popularity counts distinct contexts, not raw events."""
+        pop = PopularityRecommender(loaded_conn)
+        pop.fit()
+        rows = pop.recommend(n=10).to_pylist()
+        scores = {r["item_id"]: r["score"] for r in rows}
+        total = sum(scores.values())
+        assert abs(total - 1.0) < 1e-6
+
     def test_auto_fit_on_recommend(self, loaded_conn):
         pop = PopularityRecommender(loaded_conn)
         # Not calling fit() explicitly

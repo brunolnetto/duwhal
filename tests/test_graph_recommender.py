@@ -111,6 +111,32 @@ class TestGraphRecommender:
         scores = recs.column("total_strength").to_pylist()
         assert all(s > 0 for s in scores)
 
+    def test_frequency_and_probability_scores_differ(self, loaded_conn):
+        gr = GraphRecommender(loaded_conn, min_cooccurrence=1)
+        gr.build()
+        freq = gr.recommend(["milk"], max_depth=2, scoring="frequency", n=5).to_pylist()
+        prob = gr.recommend(["milk"], max_depth=2, scoring="probability", n=5).to_pylist()
+        assert freq and prob
+        # Scoring semantics differ: at least one corresponding score should differ
+        freq_scores = {r["recommended_item"]: r["total_strength"] for r in freq}
+        prob_scores = {r["recommended_item"]: r["total_strength"] for r in prob}
+        common = set(freq_scores) & set(prob_scores)
+        assert common
+        assert any(freq_scores[item] != prob_scores[item] for item in common)
+
+    def test_graph_argument_validation(self, loaded_conn):
+        gr = GraphRecommender(loaded_conn)
+        with pytest.raises(ValueError):
+            gr.recommend(["milk"], n=0)
+        with pytest.raises(ValueError):
+            gr.recommend(["milk"], max_depth=0)
+        with pytest.raises(ValueError):
+            gr.recommend(["milk"], min_weight=-1)
+        with pytest.raises(ValueError):
+            gr.recommend(["milk"], beam_width=0)
+        with pytest.raises(ValueError):
+            gr.recommend(["milk"], scoring="unknown")
+
     def test_recommend_auto_build(self, loaded_conn):
         """Test that recommend calls build() if not built."""
         gr = GraphRecommender(loaded_conn, min_cooccurrence=1)

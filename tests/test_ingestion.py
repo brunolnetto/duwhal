@@ -186,6 +186,23 @@ class TestLoadInteractions:
         assert res[0][0] == "S1" and res[0][2] is None
         assert res[1][0] == "S2" and res[1][2] == 100
 
+    def test_event_stream_preserved_for_sequences(self, conn):
+        df = pd.DataFrame({
+            "order_id": ["T1", "T1", "T1"],
+            "item_id": ["A", "B", "A"],
+            "ts": ["2024-01-01 10:01", "2024-01-01 10:02", "2024-01-01 10:03"],
+        })
+        load_interactions(
+            conn, df,
+            set_col="order_id", node_col="item_id", sort_col="ts"
+        )
+        # Sequential pattern A -> B must still be detectable.
+        from duwhal.mining.sequences import SequentialPatterns
+        seq = SequentialPatterns(conn, table_name="interactions", timestamp_col="sort_column", min_support=0.01)
+        result = seq.fit()
+        patterns = {r["pattern"] for r in result.to_pylist()}
+        assert "A -> B" in patterns
+
 
 
 class TestLoadInteractionMatrix:

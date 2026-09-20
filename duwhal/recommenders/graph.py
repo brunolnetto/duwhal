@@ -85,9 +85,21 @@ class GraphRecommender:
         duration_ms = (time.perf_counter() - start) * 1000
         if stats is not None:
             stats.duration_ms = duration_ms
+            nodes = self.conn.execute("SELECT COUNT(*) FROM _item_adjacency").fetchone()[0]
+            edges = self.conn.execute("SELECT SUM(len(neighbors)) FROM _item_adjacency").fetchone()[0] or 0
+            degrees = self.conn.execute("""
+                SELECT
+                    AVG(len(neighbors)) AS mean_degree,
+                    COALESCE(MAX(len(neighbors)), 0) AS max_degree,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY len(neighbors)) AS p95_degree
+                FROM _item_adjacency
+            """).fetchone()
             stats.table_stats = {
-                "num_nodes": self.conn.execute("SELECT COUNT(*) FROM _item_adjacency").fetchone()[0],
-                "num_edges": self.conn.execute("SELECT SUM(len(neighbors)) FROM _item_adjacency").fetchone()[0],
+                "nodes": nodes,
+                "edges": edges,
+                "mean_degree": degrees[0] or 0,
+                "p95_degree": degrees[2] or 0,
+                "max_degree": degrees[1] or 0,
             }
             self._stats = stats
         return self
@@ -142,10 +154,6 @@ class GraphRecommender:
         beam_sql = ""
         if beam_width:
             beam_sql = f"QUALIFY row_number() OVER (PARTITION BY depth ORDER BY strength DESC) <= {beam_width}"
-        expansion_sql = ""
-        if max_expansions:
-            expansion_sql = f"AND (SELECT COUNT(*) FROM traversal) < {max_expansions}"
-
         return f"""
         WITH RECURSIVE traversal({frontier_cols}) AS (
             {seed_select}
@@ -158,7 +166,6 @@ class GraphRecommender:
             WHERE t.depth < {max_depth}
               AND e.weight >= {min_weight}
               {cycle_filter}
-              {expansion_sql}
             {beam_sql}
         )
         SELECT item AS recommended_item, {agg}(strength) AS total_strength, MIN(depth) AS min_hops {reason_col}

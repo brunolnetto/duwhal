@@ -126,3 +126,56 @@ class TestItemCF:
         # This should hit the optimized _build_cooccurrence because _item_adjacency exists
         cf.fit()
         assert cf._fitted
+
+    def test_recommend_weighted_seeds(self, loaded_conn):
+        cf = ItemCF(loaded_conn, min_cooccurrence=1)
+        cf.fit()
+        weighted = cf.recommend(
+            ["milk", "bread"],
+            seed_weights={"milk": 2.0, "bread": 1.0},
+            n=5,
+        )
+        unweighted = cf.recommend(["milk", "bread"], n=5)
+        assert isinstance(weighted, pa.Table)
+        assert weighted.num_rows > 0
+
+    def test_recommend_weighted_integer_seeds(self, loaded_conn):
+        # Seed the DB with integer-like ids via strings for normalization check
+        cf = ItemCF(loaded_conn, min_cooccurrence=1)
+        cf.fit()
+        result = cf.recommend(
+            ["milk", "bread"],
+            seed_weights={"milk": 2.0, "bread": 1.0},
+            n=5,
+        )
+        assert isinstance(result, pa.Table)
+
+    def test_recommend_batch_matches_single(self, loaded_conn):
+        cf = ItemCF(loaded_conn, min_cooccurrence=1)
+        cf.fit()
+        single = cf.recommend(["milk"], n=5).to_pylist()
+        batch = cf.recommend_batch([["milk"]], n=5).to_pylist()
+        assert len(batch) == len(single)
+        assert {r["item_id"] for r in batch} == {r["item_id"] for r in single}
+
+    def test_recommend_batch_exclude_seed(self, loaded_conn):
+        cf = ItemCF(loaded_conn, min_cooccurrence=1)
+        cf.fit()
+        batch = cf.recommend_batch([["milk"]], n=10, exclude_seed=True).to_pylist()
+        item_ids = [r["item_id"] for r in batch]
+        assert "milk" not in item_ids
+
+    def test_recommend_batch_weighted_dict_basket(self, loaded_conn):
+        cf = ItemCF(loaded_conn, min_cooccurrence=1)
+        cf.fit()
+        batch = cf.recommend_batch(
+            [{"milk": 2.0, "bread": 1.0}],
+            n=5,
+        ).to_pylist()
+        assert isinstance(batch, list)
+
+    def test_recommend_batch_weights_list_mismatch(self, loaded_conn):
+        cf = ItemCF(loaded_conn, min_cooccurrence=1)
+        cf.fit()
+        with pytest.raises(ValueError, match="seed_weights_list"):
+            cf.recommend_batch([["milk"], ["bread"]], seed_weights_list=[{"milk": 1.0}])

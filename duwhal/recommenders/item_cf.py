@@ -87,19 +87,22 @@ class ItemCF:
                 SELECT item_b AS item_a, item_a AS item_b, cooc FROM unordered_pairs
             )
             SELECT
-                p.item_a, p.item_b,
+                p.item_a, p.item_b, p.cooc,
                 {score_expr} AS score
             FROM pairs p
             JOIN _item_counts a_cnt ON p.item_a = a_cnt.node_id
             JOIN _item_counts b_cnt ON p.item_b = b_cnt.node_id
-            QUALIFY row_number() OVER (PARTITION BY p.item_a ORDER BY score DESC) <= {self.top_k_similar}
+            QUALIFY row_number() OVER (
+                PARTITION BY p.item_a
+                ORDER BY score DESC, p.cooc DESC, p.item_b
+            ) <= {self.top_k_similar}
         """)
 
         self.conn.execute("""
             CREATE OR REPLACE TABLE _item_similarity_index AS
             SELECT item_a AS source,
-                   list(item_b ORDER BY score DESC) AS neighbors,
-                   list(score ORDER BY score DESC) AS scores
+                   list(item_b ORDER BY score DESC, cooc DESC, item_b) AS neighbors,
+                   list(score ORDER BY score DESC, cooc DESC, item_b) AS scores
             FROM _item_similarity
             GROUP BY item_a
         """)
@@ -108,9 +111,26 @@ class ItemCF:
         duration_ms = (time.perf_counter() - start) * 1000
         if stats is not None:
             stats.duration_ms = duration_ms
+            catalog_size = self.conn.execute(f"SELECT COUNT(DISTINCT node_id) FROM {self.table_name}").fetchone()[0]
+            indexed_items = self.conn.execute("SELECT COUNT(DISTINCT item_a) FROM _item_similarity").fetchone()[0]
+            num_pairs = self.conn.execute("SELECT COUNT(*) FROM _item_similarity").fetchone()[0]
+            contexts = self.conn.execute(f"SELECT COUNT(DISTINCT set_id) FROM {self.table_name}").fetchone()[0]
+            mean_neighbors = self.conn.execute("""
+                SELECT COALESCE(AVG(len(neighbors)), 0)
+                FROM _item_similarity_index
+            """).fetchone()[0]
+            max_neighbors = self.conn.execute("""
+                SELECT COALESCE(MAX(len(neighbors)), 0)
+                FROM _item_similarity_index
+            """).fetchone()[0]
             stats.table_stats = {
-                "num_items": self.conn.execute("SELECT COUNT(DISTINCT item_a) FROM _item_similarity").fetchone()[0],
-                "num_pairs": self.conn.execute("SELECT COUNT(*) FROM _item_similarity").fetchone()[0],
+                "contexts": contexts,
+                "catalog_size": catalog_size,
+                "indexed_items": indexed_items,
+                "similarity_edges": num_pairs,
+                "mean_neighbors": mean_neighbors,
+                "max_neighbors": max_neighbors,
+                "coverage": round(indexed_items / max(catalog_size, 1), 4),
             }
             self._stats = stats
         return self
@@ -195,6 +215,9 @@ class ItemCF:
         if not self._fitted: self.fit()
         if n < 1:
             raise ValueError("n must be >= 1")
+
+        if seed_weights_list is not None and len(seed_weights_list) != len(seeds_list):
+            raise ValueError("seed_weights_list must have the same length as seeds_list")
 
         rows = []
         for basket_id, seeds in enumerate(seeds_list):

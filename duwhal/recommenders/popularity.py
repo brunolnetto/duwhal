@@ -91,8 +91,14 @@ class PopularityRecommender:
         duration_ms = (time.perf_counter() - start) * 1000
         if stats is not None:
             stats.duration_ms = duration_ms
+            catalog_size = self.conn.execute(f"SELECT COUNT(DISTINCT node_id) FROM {self.table_name}").fetchone()[0]
+            num_items = self.conn.execute("SELECT COUNT(*) FROM _popularity").fetchone()[0]
             stats.table_stats = {
-                "num_items": self.conn.execute("SELECT COUNT(*) FROM _popularity").fetchone()[0],
+                "catalog_size": catalog_size,
+                "num_items": num_items,
+                "strategy": self.strategy,
+                "window_days": self.window_days,
+                "decay_half_life": self.decay_half_life,
             }
             self._stats = stats
         return self
