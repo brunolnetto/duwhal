@@ -117,17 +117,13 @@ def _synthetic_large_context_stress(seed=42):
     rng = np.random.default_rng(seed)
     n_users = 100
     n_items = 1_000
-    max_session = 15
     interactions = []
     for user_id in range(n_users):
-        n_interactions = rng.integers(400, 800)
-        session_id = f"u{user_id}"
+        n_interactions = rng.integers(6_000, 12_000)
+        user_id_str = f"u{user_id}"
         items = rng.integers(0, n_items, size=n_interactions)
-        # Break into sessions of at most max_session items.
-        for i, item in enumerate(items):
-            if i % max_session == 0:
-                session_id = f"u{user_id}_s{i // max_session}"
-            interactions.append({"user_id": session_id, "item_id": f"i{item}"})
+        for item in items:
+            interactions.append({"user_id": user_id_str, "item_id": f"i{item}"})
     return pd.DataFrame(interactions)
 
 

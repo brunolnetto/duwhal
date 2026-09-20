@@ -118,6 +118,20 @@ class TestGraphRecommender:
             assert "reason" in b
             assert "reason" not in a
 
+    def test_return_paths_same_semantics_with_beam(self, loaded_conn):
+        """Bounded traversal must also keep identical scores regardless of return_paths."""
+        gr = GraphRecommender(loaded_conn, min_cooccurrence=1)
+        gr.build()
+        without = gr.recommend(["milk"], max_depth=2, n=5, return_paths=False, beam_width=10).to_pylist()
+        with_paths = gr.recommend(["milk"], max_depth=2, n=5, return_paths=True, beam_width=10).to_pylist()
+        assert len(without) == len(with_paths)
+        for a, b in zip(without, with_paths):
+            assert a["recommended_item"] == b["recommended_item"]
+            assert a["total_strength"] == b["total_strength"]
+            assert a["min_hops"] == b["min_hops"]
+            assert "reason" in b
+            assert "reason" not in a
+
     def test_recommend_scoring_probability(self, loaded_conn):
         """Test the Path Integral scoring mode."""
         gr = GraphRecommender(loaded_conn, min_cooccurrence=1)
