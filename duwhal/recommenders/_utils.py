@@ -42,7 +42,7 @@ def normalize_seeds(seeds: Any) -> List[str]:
     return out
 
 
-def seed_weights(seeds: Any) -> dict[str, float]:
+def normalize_seed_weights(seeds: Any) -> dict[str, float]:
     """Return a mapping from normalized seed item to weight.
 
     Defaults to 1.0 when no weight is provided.  Keys are always normalized to

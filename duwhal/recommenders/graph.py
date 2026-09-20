@@ -116,6 +116,7 @@ class GraphRecommender:
         self,
         max_depth: int,
         min_weight: int,
+        scoring: str,
         agg: str,
         exclude: bool,
         n: int,
@@ -123,7 +124,7 @@ class GraphRecommender:
         beam_width: Optional[int],
         max_expansions: Optional[int],
     ) -> str:
-        score_col = self._score_column(agg if agg == "path" else "frequency")
+        score_col = self._score_column(scoring)
         if return_paths:
             reason_col = ", arg_max(array_to_string(path, ' -> '), strength) AS reason"
             frontier_cols = "item, strength, depth, path"
@@ -177,17 +178,23 @@ class GraphRecommender:
         exclude_seed: bool = True,
         scoring: str = "frequency",
         return_paths: bool = False,
-        beam_width: Optional[int] = None,
+        beam_width: Optional[int] = 200,
         max_expansions: Optional[int] = None,
     ) -> pa.Table:
         if not self._built: self.build()
         self._validate_params()
+        if scoring not in {"frequency", "probability", "path"}:
+            raise ValueError(f"Unknown scoring: {scoring}")
         if n < 1:
             raise ValueError("n must be >= 1")
         if max_depth < 1:
             raise ValueError("max_depth must be >= 1")
         if min_weight < 0:
             raise ValueError("min_weight must be >= 0")
+        if beam_width is not None and beam_width < 1:
+            raise ValueError("beam_width must be >= 1 or None")
+        if max_expansions is not None and max_expansions < 1:
+            raise ValueError("max_expansions must be >= 1 or None")
         seeds = normalize_seeds(seed_items)
         if not seeds:
             schema = [
@@ -203,6 +210,7 @@ class GraphRecommender:
         q = self._build_traversal_query(
             max_depth=max_depth,
             min_weight=min_weight,
+            scoring=scoring,
             agg="MAX" if scoring == "path" else "SUM",
             exclude=exclude_seed,
             n=n,

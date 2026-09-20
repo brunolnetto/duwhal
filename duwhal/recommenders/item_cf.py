@@ -5,7 +5,11 @@ from typing import Any, Optional
 import pyarrow as pa
 
 from duwhal.core.connection import DuckDBConnection
-from duwhal.recommenders._utils import normalize_seeds, seed_table, seed_weights
+from duwhal.recommenders._utils import (
+    normalize_seed_weights,
+    normalize_seeds,
+    seed_table,
+)
 
 
 class ItemCF:
@@ -137,7 +141,12 @@ class ItemCF:
         if n < 1:
             raise ValueError("n must be >= 1")
 
-        weights = seed_weights(seed_weights) if seed_weights else {item: 1.0 for item in seeds}
+        if seed_weights is not None:
+            weights = normalize_seed_weights(seed_weights)
+        elif isinstance(seed_items, dict):
+            weights = normalize_seed_weights(seed_items)
+        else:
+            weights = {item: 1.0 for item in seeds}
         weights = {item: weights.get(item, 1.0) for item in seeds}
         table = seed_table(weights, weight_col="weight")
         self.conn.register("_seeds", table)
@@ -192,7 +201,12 @@ class ItemCF:
             norm_seeds = normalize_seeds(seeds)
             if not norm_seeds:
                 continue
-            weights = seed_weights(seed_weights_list[basket_id]) if seed_weights_list and seed_weights_list[basket_id] else {item: 1.0 for item in norm_seeds}
+            if seed_weights_list is not None and seed_weights_list[basket_id] is not None:
+                weights = normalize_seed_weights(seed_weights_list[basket_id])
+            elif isinstance(seeds, dict):
+                weights = normalize_seed_weights(seeds)
+            else:
+                weights = {item: 1.0 for item in norm_seeds}
             for item in norm_seeds:
                 rows.append({"basket_id": basket_id, "node_id": item, "weight": float(weights.get(item, 1.0))})
 
@@ -207,6 +221,14 @@ class ItemCF:
             )
 
         self.conn.register("_batch_seeds", pa.Table.from_pylist(rows))
+        exclude_filter = """
+            AND NOT EXISTS (
+                SELECT 1
+                FROM _batch_seeds seeds
+                WHERE seeds.basket_id = rec.basket_id
+                  AND seeds.node_id = rec.item_id
+            )
+        """ if exclude_seed else ""
         query = f"""
             SELECT
                 rec.basket_id,
@@ -225,6 +247,7 @@ class ItemCF:
                 GROUP BY bs.basket_id, u.item_id
             ) rec
             WHERE 1=1
+            {exclude_filter}
             QUALIFY row_number() OVER (PARTITION BY rec.basket_id ORDER BY rec.score DESC, rec.item_id) <= {n}
             ORDER BY rec.basket_id, rec.score DESC, rec.item_id
         """
