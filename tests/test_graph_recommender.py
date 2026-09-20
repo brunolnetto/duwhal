@@ -54,7 +54,7 @@ class TestGraphRecommender:
         A -> B (Strong)
         B -> C (Strong)
         A -> C (No path or Weak)
-        
+
         Graph:
         T1: A, B
         T2: B, C
