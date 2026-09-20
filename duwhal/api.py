@@ -380,7 +380,7 @@ class Duwhal:
         strategy: str = "auto",
         n: int = 10,
         **kwargs,
-    ) -> list[pa.Table]:
+    ) -> list[pa.Table] | pa.Table:
         """Generate recommendations for multiple seed baskets.
 
         Parameters
@@ -389,13 +389,20 @@ class Duwhal:
             List of seed baskets.  Each basket may be a list of items or a
             dict mapping item to weight.
         strategy, n, **kwargs:
-            Forwarded to :meth:`recommend`.
+            Forwarded to :meth:`recommend` for non-CF strategies.  For
+            ``strategy="cf"`` the model's vectorized batch inference is used.
 
         Returns
         -------
-        list[pa.Table]
-            One recommendation table per basket, in the same order.
+        list[pa.Table] or pa.Table
+            One recommendation table per basket for non-CF strategies; a
+            single table with ``basket_id`` for CF.
         """
+        strategy = self._resolve_strategy(strategy)
+        if strategy == "cf":
+            if not self._cf_model:
+                raise RuntimeError("Call fit_cf() first.")
+            return self._cf_model.recommend_batch(seeds_list, n=n, **kwargs)
         return [
             self.recommend(seed_items=seeds, strategy=strategy, n=n, **kwargs)
             for seeds in seeds_list

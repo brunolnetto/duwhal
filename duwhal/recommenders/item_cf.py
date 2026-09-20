@@ -5,7 +5,7 @@ from typing import Any, Optional
 import pyarrow as pa
 
 from duwhal.core.connection import DuckDBConnection
-from duwhal.recommenders._utils import normalize_seeds, seed_table
+from duwhal.recommenders._utils import normalize_seeds, seed_table, seed_weights
 
 
 class ItemCF:
@@ -28,10 +28,20 @@ class ItemCF:
         self.shrinkage = shrinkage
         self._fitted = False
         self._stats = None
+        self._validate_params()
+
+    def _validate_params(self):
+        if self.min_cooccurrence < 1:
+            raise ValueError("min_cooccurrence must be >= 1")
+        if self.top_k_similar < 1:
+            raise ValueError("top_k_similar must be >= 1")
+        if self.shrinkage < 0:
+            raise ValueError("shrinkage must be non-negative")
 
     def fit(self, stats=None):
         import time
         start = time.perf_counter()
+        self._validate_params()
         # Validation for manually set metric
         if self.metric not in ["jaccard", "cosine", "lift"]:
             raise ValueError(f"Unknown metric: {self.metric}")
@@ -55,22 +65,22 @@ class ItemCF:
 
         self.conn.execute(f"""
             CREATE OR REPLACE TABLE _item_similarity AS
-            WITH directed_pairs AS (
+            WITH unordered_pairs AS (
                 SELECT
-                    LEAST(a.node_id, b.node_id) AS item_a,
-                    GREATEST(a.node_id, b.node_id) AS item_b,
+                    a.node_id AS item_a,
+                    b.node_id AS item_b,
                     COUNT(DISTINCT a.set_id) AS cooc
                 FROM {self.table_name} a
                 JOIN {self.table_name} b
                   ON a.set_id = b.set_id
-                 AND a.node_id != b.node_id
+                 AND a.node_id < b.node_id
                 GROUP BY 1, 2
                 HAVING cooc >= {self.min_cooccurrence}
             ),
             pairs AS (
-                SELECT item_a, item_b, cooc FROM directed_pairs
+                SELECT item_a, item_b, cooc FROM unordered_pairs
                 UNION ALL
-                SELECT item_b AS item_a, item_a AS item_b, cooc FROM directed_pairs
+                SELECT item_b AS item_a, item_a AS item_b, cooc FROM unordered_pairs
             )
             SELECT
                 p.item_a, p.item_b,
@@ -124,24 +134,98 @@ class ItemCF:
         seeds = normalize_seeds(seed_items)
         if not seeds:
             return pa.Table.from_pylist([], schema=pa.schema([("item_id", pa.string()), ("score", pa.float64())]))
+        if n < 1:
+            raise ValueError("n must be >= 1")
 
-        weights = seed_weights if seed_weights else {item: 1.0 for item in seeds}
-        table = seed_table({item: weights.get(item, 1.0) for item in seeds}, weight_col="weight")
+        weights = seed_weights(seed_weights) if seed_weights else {item: 1.0 for item in seeds}
+        weights = {item: weights.get(item, 1.0) for item in seeds}
+        table = seed_table(weights, weight_col="weight")
         self.conn.register("_seeds", table)
 
-        exclude_sql = "AND item_b NOT IN (SELECT node_id FROM _seeds)" if exclude_seed else ""
+        # Use the precomputed adjacency-style serving index.
+        if exclude_seed:
+            exclude_filter = """
+                WHERE item_id NOT IN (
+                    SELECT node_id FROM _seeds
+                )
+            """
+        else:
+            exclude_filter = ""
 
-        # DuckDB supports positional parameters but not for IN-list construction here;
-        # table registration is used for seed values to avoid string interpolation.
         query = f"""
             SELECT
-                item_b AS item_id,
-                SUM(score * s.weight) AS score
-            FROM _item_similarity
-            JOIN _seeds s ON _item_similarity.item_a = s.node_id
-            {exclude_sql}
-            GROUP BY 1
+                item_id,
+                SUM(score * weight) AS score
+            FROM (
+                SELECT
+                    s.weight,
+                    unnest(i.neighbors) AS item_id,
+                    unnest(i.scores) AS score
+                FROM _seeds s
+                JOIN _item_similarity_index i ON i.source = s.node_id
+            ) sim
+            {exclude_filter}
+            GROUP BY item_id
             ORDER BY score DESC
             LIMIT {n}
+        """
+        return self.conn.query(query)
+
+    def recommend_batch(
+        self,
+        seeds_list: list[Any],
+        n: int = 10,
+        exclude_seed: bool = True,
+        seed_weights_list: Optional[list[dict[str, float]]] = None,
+    ) -> pa.Table:
+        """True batch inference for multiple seed baskets.
+
+        Returns a single Arrow table with ``basket_id``, ``item_id`` and
+        ``score`` columns, ranked per basket.
+        """
+        if not self._fitted: self.fit()
+        if n < 1:
+            raise ValueError("n must be >= 1")
+
+        rows = []
+        for basket_id, seeds in enumerate(seeds_list):
+            norm_seeds = normalize_seeds(seeds)
+            if not norm_seeds:
+                continue
+            weights = seed_weights(seed_weights_list[basket_id]) if seed_weights_list and seed_weights_list[basket_id] else {item: 1.0 for item in norm_seeds}
+            for item in norm_seeds:
+                rows.append({"basket_id": basket_id, "node_id": item, "weight": float(weights.get(item, 1.0))})
+
+        if not rows:
+            return pa.Table.from_pylist(
+                [],
+                schema=pa.schema([
+                    ("basket_id", pa.int64()),
+                    ("item_id", pa.string()),
+                    ("score", pa.float64()),
+                ]),
+            )
+
+        self.conn.register("_batch_seeds", pa.Table.from_pylist(rows))
+        query = f"""
+            SELECT
+                rec.basket_id,
+                rec.item_id,
+                rec.score
+            FROM (
+                SELECT
+                    bs.basket_id,
+                    u.item_id,
+                    SUM(u.score * bs.weight) AS score
+                FROM _item_similarity_index i
+                JOIN _batch_seeds bs ON i.source = bs.node_id
+                CROSS JOIN LATERAL (
+                    SELECT unnest(i.neighbors) AS item_id, unnest(i.scores) AS score
+                ) u
+                GROUP BY bs.basket_id, u.item_id
+            ) rec
+            WHERE 1=1
+            QUALIFY row_number() OVER (PARTITION BY rec.basket_id ORDER BY rec.score DESC, rec.item_id) <= {n}
+            ORDER BY rec.basket_id, rec.score DESC, rec.item_id
         """
         return self.conn.query(query)

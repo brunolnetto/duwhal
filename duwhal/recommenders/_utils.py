@@ -45,10 +45,15 @@ def normalize_seeds(seeds: Any) -> List[str]:
 def seed_weights(seeds: Any) -> dict[str, float]:
     """Return a mapping from normalized seed item to weight.
 
-    Defaults to 1.0 when no weight is provided.
+    Defaults to 1.0 when no weight is provided.  Keys are always normalized to
+    strings so integer IDs match their VARCHAR representation.
     """
     if isinstance(seeds, dict):
-        return {item: float(weight) for item, weight in seeds.items() if weight is not None}
+        return {
+            normalize_seeds([item])[0]: float(weight)
+            for item, weight in seeds.items()
+            if weight is not None
+        }
     return {item: 1.0 for item in normalize_seeds(seeds)}
 
 
@@ -60,7 +65,7 @@ def seed_table(seeds: Any, weight_col: Optional[str] = None) -> pa.Table:
     """
     if isinstance(seeds, dict) and weight_col:
         rows = [
-            {"node_id": item, weight_col: float(weight)}
+            {"node_id": normalize_seeds([item])[0], weight_col: float(weight)}
             for item, weight in seeds.items()
             if weight is not None
         ]

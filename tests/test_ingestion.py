@@ -50,12 +50,14 @@ class TestLoadInteractions:
             conn, transactions_df,
             set_col="order_id", node_col="item_id"
         )
+        # With context-item deduplication across appends, re-loading the same
+        # batch adds no duplicate rows.
         count2 = load_interactions(
             conn, transactions_df,
             set_col="order_id", node_col="item_id",
             append=True
         )
-        assert count2 == 2 * len(transactions_df)
+        assert count2 == len(transactions_df)
 
     def test_replace_mode(self, conn, transactions_df):
         load_interactions(

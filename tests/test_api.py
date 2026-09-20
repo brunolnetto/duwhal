@@ -170,8 +170,9 @@ class TestCoverageGaps:
         df = pd.DataFrame({"set_id": ["T1"], "item_A": [1]})
         from duwhal.core.ingestion import load_interaction_matrix
         load_interaction_matrix(conn, df, table_name="basket_append")
+        # Context-item deduplication across appends prevents duplicate rows.
         count = load_interaction_matrix(conn, df, table_name="basket_append", append=True)
-        assert count == 2
+        assert count == 1
 
     def test_load_matrix_missing_set_id(self, conn):
         """Test load_interaction_matrix behaves when set_id is missing (coverage for pass block)."""

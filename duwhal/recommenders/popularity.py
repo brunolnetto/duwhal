@@ -28,10 +28,18 @@ class PopularityRecommender:
         self.decay_half_life = decay_half_life
         self._fitted = False
         self._stats = None
+        self._validate_params()
+
+    def _validate_params(self):
+        if self.window_days < 1:
+            raise ValueError("window_days must be >= 1")
+        if self.decay_half_life is not None and self.decay_half_life <= 0:
+            raise ValueError("decay_half_life must be > 0")
 
     def fit(self, stats=None):
         import time
         start = time.perf_counter()
+        self._validate_params()
         if self.strategy == "trending" and not self.timestamp_col:
             # check for sort_column
             try:
@@ -40,34 +48,43 @@ class PopularityRecommender:
             except Exception:
                 raise ValueError("timestamp_col required for trending strategy.")
 
-        where_clause = ""
         if self.strategy == "trending":
-            # Assume timestamp_col is a date or we can handle it
-            where_clause = f"WHERE {self.timestamp_col} >= (SELECT MAX({self.timestamp_col}) FROM {self.table_name}) - INTERVAL {self.window_days} DAY"
+            where_clause = f"WHERE {self.timestamp_col} >= bounds.max_ts - INTERVAL {self.window_days} DAY"
+        else:
+            where_clause = ""
 
-        score_expr = "COUNT(*)::DOUBLE"
+        ts_col = self.timestamp_col if self.timestamp_col else "NULL"
+        half_life_seconds = (self.decay_half_life or 0) * 86400.0
         if self.decay_half_life and self.timestamp_col:
-            score_expr = f"SUM(POWER(0.5, EXTRACT(EPOCH FROM ((SELECT MAX({self.timestamp_col}) FROM {self.table_name}) - {self.timestamp_col})) / ({self.decay_half_life} * 86400.0)))"
+            score_expr = f"SUM(POWER(0.5, EXTRACT(EPOCH FROM (bounds.max_ts - {self.timestamp_col})) / {half_life_seconds}))"
+        else:
+            score_expr = "COUNT(DISTINCT set_id)::DOUBLE"
 
         self.conn.execute(f"""
             CREATE OR REPLACE TABLE _popularity AS
+            WITH bounds AS (
+                SELECT MAX({ts_col}) AS max_ts
+                FROM {self.table_name}
+            ),
+            weighted AS (
+                SELECT
+                    node_id,
+                    {score_expr} AS raw_score
+                FROM {self.table_name}
+                CROSS JOIN bounds
+                {where_clause}
+                GROUP BY 1
+            )
             SELECT
-                node_id,
-                {score_expr} / (SELECT SUM(cnt) FROM (
-                    SELECT node_id, {score_expr} AS cnt
-                    FROM {self.table_name}
-                    {where_clause}
-                    GROUP BY 1
-                )) AS score
-            FROM {self.table_name}
-            {where_clause}
-            GROUP BY 1
+                w.node_id,
+                w.raw_score / (SELECT SUM(raw_score) FROM weighted) AS score
+            FROM weighted w
         """)
 
         self.conn.execute("""
             CREATE OR REPLACE TABLE _popularity_ranks AS
             SELECT node_id AS item_id, score,
-                   RANK() OVER (ORDER BY score DESC) AS rank
+                   ROW_NUMBER() OVER (ORDER BY score DESC, node_id) AS rank
             FROM _popularity
         """)
         self._fitted = True

@@ -70,4 +70,5 @@ class TestPerformanceRegression:
             results = db.recommend_batch(seeds, strategy="cf", n=5)
             elapsed_ms = (time.perf_counter() - start) * 1000
             assert elapsed_ms < 2_000, f"recommend_batch took {elapsed_ms:.1f} ms"
-            assert len(results) == len(seeds)
+            assert results.num_rows == len(seeds) * 5
+            assert set(results.column("basket_id").to_pylist()) == set(range(5))
